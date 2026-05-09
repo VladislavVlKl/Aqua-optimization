@@ -277,3 +277,37 @@ select option{background:#1a1a2e;}
 .toast-success{background:var(--success);}
 .toast-error{background:var(--danger);}
 .toast-info{background:#374151;}
+
+/* ── ДОПОЛНЕНИЯ К style.css v3 ── */
+/* Вставить в конец существующего style.css */
+
+/* Кнопка-иконка в хедере */
+.btn-icon{background:none;border:none;font-size:20px;cursor:pointer;padding:4px;line-height:1;}
+
+/* Предупреждение об абонементе */
+.warn-banner{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);
+  border-radius:var(--rs);padding:10px 14px;font-size:13px;color:var(--warn);margin-bottom:12px;}
+
+/* Badges */
+.drop-badge{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:700;
+  background:rgba(59,130,246,.15);color:#60a5fa;}
+
+/* Duty в расписании — блок */
+.slot-duty-block{border-radius:0;margin-bottom:0;font-size:10px;text-align:center;}
+
+/* Форма премии/штрафа */
+.adj-form{background:var(--card);border:1px solid var(--border);border-radius:var(--rs);
+  padding:14px;margin:16px 0;}
+.adj-form h4{margin-bottom:10px;}
+
+/* Контроль */
+.control-section{background:var(--card);border:1px solid var(--border);
+  border-radius:var(--rs);padding:14px;margin-bottom:12px;}
+.control-title{font-size:14px;font-weight:700;margin-bottom:10px;}
+.control-title.danger{color:var(--danger);}
+.control-title.warn{color:var(--warn);}
+.control-title.hint-title{color:var(--hint);}
+.control-item{padding:8px 0;border-bottom:1px solid var(--border);}
+.control-item:last-child{border-bottom:none;}
+.ci-main{font-size:13px;font-weight:500;}
+.ci-sub{font-size:12px;color:var(--hint);margin-top:2px;}
