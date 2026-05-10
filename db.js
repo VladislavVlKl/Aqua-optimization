@@ -1,5 +1,5 @@
 // =============================================
-// База данных v3
+// База данных v4 — полный файл
 // =============================================
 
 let _sb = null;
@@ -61,11 +61,9 @@ const DB = {
     if (error) throw error;
   },
   async renameBranch(oldName, newName) {
-    // 1. Обновляем справочник
     const {error:e1} = await sb().from('branches')
       .update({name:newName.trim()}).eq('name',oldName);
     if (e1) throw e1;
-    // 2. Вызываем SQL-функцию для обновления всех таблиц
     const {error:e2} = await sb().rpc('rename_branch',{old_name:oldName,new_name:newName.trim()});
     if (e2) throw e2;
   },
@@ -105,16 +103,13 @@ const DB = {
       .update({balance:(cl?.balance||0)+amount}).eq('id',clientId).select().single();
     if (error) throw error; return data;
   },
-  /** Клиенты с истекающим абонементом (≤ SUBSCRIPTION_WARN_DAYS дней) */
   async getExpiringClients(trainerId) {
-    const today   = todayStr();
+    const today = todayStr();
     const warnDay = new Date(); warnDay.setDate(warnDay.getDate()+SUBSCRIPTION_WARN_DAYS);
     const warnStr = warnDay.toISOString().slice(0,10);
-    const {data,error} = await sb().from('clients')
-      .select('*').eq('trainer_id',trainerId)
-      .not('subscription_end','is',null)
-      .lte('subscription_end',warnStr)
-      .gte('subscription_end',today)
+    const {data,error} = await sb().from('clients').select('*')
+      .eq('trainer_id',trainerId).not('subscription_end','is',null)
+      .lte('subscription_end',warnStr).gte('subscription_end',today)
       .order('subscription_end');
     if (error) throw error; return data||[];
   },
@@ -123,7 +118,6 @@ const DB = {
   async logWorkouts(rows) {
     const {data,error} = await sb().from('workouts').insert(rows).select();
     if (error) throw error;
-
     const nonDebtNonDropin = rows.filter(r=>!r.is_debt&&!r.is_drop_in);
     if (nonDebtNonDropin.length) {
       const cid = nonDebtNonDropin[0].client_id;
@@ -136,7 +130,6 @@ const DB = {
       await sb().from('clients')
         .update({last_used:new Date().toISOString()}).eq('id',rows[0].client_id);
     }
-    // Отметить drop_in_used у ребёнка
     const dropInRow = rows.find(r=>r.is_drop_in);
     if (dropInRow) {
       const {data:cl} = await sb().from('clients').select('age').eq('id',dropInRow.client_id).single();
@@ -261,20 +254,16 @@ const DB = {
 
   // ─── TODAY / CONFIRMATIONS ───────────────────
   async getTodaySlots(trainerId, dateStr) {
-    // Fix: use T12:00:00 to avoid UTC/local timezone mismatch
     const dow = (new Date(dateStr+'T12:00:00').getDay()+6) % 7;
-
     const {data:slots,error:e1} = await sb().from('schedule_slots')
       .select('*, clients(fio,balance,category,age,drop_in_used), group_types(name,type,billing_model)')
       .eq('trainer_id',trainerId).eq('day_of_week',dow).eq('active',true)
       .order('start_time');
     if (e1) throw e1;
     if (!slots?.length) return [];
-
     const slotIds = slots.map(s=>s.id);
     const {data:confs} = await sb().from('schedule_confirmations')
       .select('*').in('slot_id',slotIds).eq('session_date',dateStr);
-
     const confMap = {};
     (confs||[]).forEach(c=>{ confMap[c.slot_id]=c; });
     return slots.map(s=>({...s, confirmation: confMap[s.id]||null}));
@@ -287,7 +276,7 @@ const DB = {
     if (error) throw error; return data;
   },
 
-  // ─── MONTH ADJUSTMENTS (премия/штраф) ────────
+  // ─── MONTH ADJUSTMENTS ───────────────────────
   async getAdjustment(trainerId, year, month) {
     const {data,error} = await sb().from('month_adjustments').select('*')
       .eq('trainer_id',trainerId).eq('year',year).eq('month',month).maybeSingle();
@@ -299,6 +288,144 @@ const DB = {
               {onConflict:'trainer_id,year,month'})
       .select().single();
     if (error) throw error; return data;
+  },
+
+  // ─── SUBSCRIPTIONS ───────────────────────────
+  async getActiveSubscription(clientId) {
+    const {data,error} = await sb().from('subscriptions')
+      .select('*, training_goals(*)')
+      .eq('client_id',clientId).eq('is_active',true)
+      .order('created_at',{ascending:false}).limit(1).maybeSingle();
+    if (error) throw error; return data;
+  },
+  async getSubscriptionHistory(clientId) {
+    const {data,error} = await sb().from('subscriptions')
+      .select('*, training_goals(*)')
+      .eq('client_id',clientId).order('created_at',{ascending:false});
+    if (error) throw error; return data||[];
+  },
+  async createSubscription(clientId, trainerId, startDate, initialBalance) {
+    await sb().from('subscriptions')
+      .update({is_active:false}).eq('client_id',clientId).eq('is_active',true);
+    const {data,error} = await sb().from('subscriptions')
+      .insert({client_id:clientId,trainer_id:trainerId,
+               start_date:startDate,initial_balance:initialBalance,is_active:true})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async closeSubscription(subId, closingNote, endDate) {
+    const {data,error} = await sb().from('subscriptions')
+      .update({is_active:false,end_date:endDate,closing_note:closingNote||null})
+      .eq('id',subId).select().single();
+    if (error) throw error; return data;
+  },
+
+  // ─── TRAINING GOALS ──────────────────────────
+  async addGoal(subscriptionId, clientId, goalText) {
+    const {data,error} = await sb().from('training_goals')
+      .insert({subscription_id:subscriptionId,client_id:clientId,goal_text:goalText})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async deleteGoal(goalId) {
+    const {error} = await sb().from('training_goals').delete().eq('id',goalId);
+    if (error) throw error;
+  },
+
+  // ─── SESSION NOTES ───────────────────────────
+  async getNoteByWorkout(workoutId) {
+    const {data,error} = await sb().from('session_notes')
+      .select('*').eq('workout_id',workoutId).maybeSingle();
+    if (error) throw error; return data;
+  },
+  async getNotesForSubscription(subscriptionId) {
+    const {data,error} = await sb().from('session_notes')
+      .select('*, workouts(workout_date)')
+      .eq('subscription_id',subscriptionId)
+      .order('session_number',{ascending:true});
+    if (error) throw error; return data||[];
+  },
+  async upsertNote(workoutId, clientId, trainerId, subscriptionId, accomplishments, nextTask, sessionNumber) {
+    const deadline = new Date(Date.now()+48*3600000).toISOString();
+    const {data,error} = await sb().from('session_notes')
+      .upsert({
+        workout_id:workoutId,client_id:clientId,trainer_id:trainerId,
+        subscription_id:subscriptionId,
+        accomplishments:accomplishments||null,
+        next_task:nextTask||null,
+        session_number:sessionNumber||null,
+        deadline,updated_at:new Date().toISOString(),
+      },{onConflict:'workout_id'})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async getOverdueNotes(clientId, trainerId) {
+    const cutoff = new Date(Date.now()-48*3600000).toISOString();
+    const {data:workouts} = await sb().from('workouts')
+      .select('id,workout_date').eq('client_id',clientId).eq('trainer_id',trainerId)
+      .eq('is_drop_in',false).eq('is_debt',false)
+      .lt('workout_date',cutoff).order('workout_date',{ascending:false});
+    if (!workouts?.length) return [];
+    const ids = workouts.map(w=>w.id);
+    const {data:notes} = await sb().from('session_notes')
+      .select('workout_id').in('workout_id',ids).not('accomplishments','is',null);
+    const noted = new Set((notes||[]).map(n=>n.workout_id));
+    return workouts.filter(w=>!noted.has(w.id));
+  },
+  async getClientProfile(clientId, viewerRole, viewerBranches) {
+    const {data:client,error} = await sb().from('clients')
+      .select('*, profiles!trainer_id(fio,branches)').eq('id',clientId).single();
+    if (error) throw error;
+    if (viewerRole==='senior_trainer') {
+      const trainerBranches = client.profiles?.branches||[];
+      const hasAccess = trainerBranches.some(b=>(viewerBranches||[]).includes(b));
+      if (!hasAccess) throw new Error('Нет доступа');
+    }
+    const [subs,workouts] = await Promise.all([
+      sb().from('subscriptions').select('*, training_goals(*)')
+        .eq('client_id',clientId).order('created_at',{ascending:false}),
+      sb().from('workouts').select('*, session_notes(*)')
+        .eq('client_id',clientId).order('workout_date',{ascending:false}).limit(50),
+    ]);
+    return { client, subscriptions: subs.data||[], workouts: workouts.data||[] };
+  },
+
+  // ─── EVENTS ──────────────────────────────────
+  async getUpcomingEvents(branch) {
+    const now = new Date().toISOString();
+    const in30 = new Date(Date.now()+30*86400000).toISOString();
+    let q = sb().from('events')
+      .select('*, event_participants(trainer_id), profiles!created_by(fio)')
+      .gte('end_time',now).lte('start_time',in30).order('start_time');
+    if (branch) q = q.or(`branch.is.null,branch.eq.${branch}`);
+    const {data,error} = await q;
+    if (error) throw error; return data||[];
+  },
+  async getBlockingEvents(branch, startTime, endTime) {
+    const {data,error} = await sb().from('events')
+      .select('id,title,start_time,end_time').eq('blocks_pool',true)
+      .or(`branch.is.null,branch.eq.${branch}`)
+      .lt('start_time',endTime).gt('end_time',startTime);
+    if (error) throw error; return data||[];
+  },
+  async createEvent(fields) {
+    const {data,error} = await sb().from('events').insert(fields)
+      .select('*, profiles!created_by(fio)').single();
+    if (error) throw error; return data;
+  },
+  async deleteEvent(id) {
+    const {error} = await sb().from('events').delete().eq('id',id);
+    if (error) throw error;
+  },
+  async joinEvent(eventId, trainerId) {
+    const {error} = await sb().from('event_participants')
+      .insert({event_id:eventId,trainer_id:trainerId});
+    if (error&&!error.message.includes('unique')) throw error;
+  },
+  async leaveEvent(eventId, trainerId) {
+    const {error} = await sb().from('event_participants')
+      .delete().eq('event_id',eventId).eq('trainer_id',trainerId);
+    if (error) throw error;
   },
 
   // ─── REPORTS ─────────────────────────────────
@@ -333,7 +460,6 @@ const DB = {
       .in('role',['trainer','senior_trainer']);
     if (branch) pq = pq.contains('branches',[branch]);
 
-    // Корректировки (премии/штрафы)
     let aq = sb().from('month_adjustments').select('*').eq('year',year).eq('month',month);
 
     const [w,d,tg,gs,p,adj] = await Promise.all([wq,dq,tgq,gsq,pq,aq]);
@@ -352,7 +478,6 @@ const DB = {
     const to      = new Date(year,month,  1).toISOString();
     const fromDay = `${year}-${String(month).padStart(2,'0')}-01`;
     const toDay   = new Date(year,month,1).toISOString().slice(0,10);
-
     const [w,d,tg,gs,adj] = await Promise.all([
       sb().from('workouts').select('*, clients(fio,age)')
         .eq('trainer_id',trainerId).gte('workout_date',from).lt('workout_date',to)
@@ -378,269 +503,64 @@ const DB = {
     };
   },
 
-  // ─── КОНТРОЛЬ (КООРДИНАТОР) ──────────────────
+  // ─── КОНТРОЛЬ ────────────────────────────────
   async getControlData() {
     const today   = todayStr();
     const warnDay = new Date(); warnDay.setDate(warnDay.getDate()+SUBSCRIPTION_WARN_DAYS);
     const warnStr = warnDay.toISOString().slice(0,10);
-
-    // Три дня назад
     const threeDaysAgo = new Date(); threeDaysAgo.setDate(threeDaysAgo.getDate()-3);
-
-    const [expiring, oldDebt, childDropin, batchWO, inactive] = await Promise.all([
-
-      // 1. Абонементы истекают в ближайшие 7 дней
+    const [expiring,oldDebt,childDropin,batchWO,inactive] = await Promise.all([
       sb().from('clients').select('*, profiles!trainer_id(fio)')
         .not('subscription_end','is',null)
         .gte('subscription_end',today).lte('subscription_end',warnStr),
-
-      // 2. Долг не подтверждён > 3 дней
       sb().from('workouts').select('*, clients(fio), profiles!trainer_id(fio)')
         .eq('is_debt',true).is('debt_confirmed_at',null)
         .lt('created_at',threeDaysAgo.toISOString()),
-
-      // 3. Дети с > 1 разовым
       sb().from('clients').select('*, profiles!trainer_id(fio)')
-        .eq('drop_in_used',true)
-        .lte('age',CHILD_MAX_AGE),
-
-      // 4. Пакетные списания > 3 ПТ в одном notes-блоке (за один раз)
-      sb().from('workouts').select('trainer_id, notes, workout_date, profiles!trainer_id(fio)')
+        .eq('drop_in_used',true).lte('age',CHILD_MAX_AGE),
+      sb().from('workouts')
+        .select('trainer_id,notes,workout_date,profiles!trainer_id(fio)')
         .not('notes','is',null)
-        .gte('workout_date', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
-
-      // 5. Тренеры без активности в текущем месяце
+        .gte('workout_date',new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString()),
       sb().from('profiles').select('id,fio,branches').in('role',['trainer','senior_trainer']),
     ]);
-
-    // Группируем пакетные (одинаковый notes = один batch, считаем кол-во)
     const notesCount = {};
-    (batchWO.data||[]).forEach(w => {
+    (batchWO.data||[]).forEach(w=>{
       if (!w.notes) return;
-      const key = `${w.trainer_id}::${w.notes}`;
-      notesCount[key] = notesCount[key] || {count:0, rec:w};
+      const key=`${w.trainer_id}::${w.notes}`;
+      notesCount[key]=notesCount[key]||{count:0,rec:w};
       notesCount[key].count++;
     });
-    const suspiciousBatch = Object.values(notesCount).filter(x=>x.count>3);
-
     return {
-      expiringClients: expiring.data ||[],
-      oldDebt:         oldDebt.data  ||[],
+      expiringClients:  expiring.data  ||[],
+      oldDebt:          oldDebt.data   ||[],
       childDropinAbuse: childDropin.data||[],
-      suspiciousBatch,
-      inactiveTrainers: inactive.data||[],  // фильтрация в app.js
+      suspiciousBatch:  Object.values(notesCount).filter(x=>x.count>3),
+      inactiveTrainers: inactive.data  ||[],
     };
   },
 };
 
-// Расчёт ЗП за период
+// ─── РАСЧЁТ ЗП ───────────────────────────────
 function calcSalary({workouts=[], duties=[], trainerGroups=[], groupSessions=[], adjustment=null}) {
-  const cat = {1:0, 2:0, 3:0, debt:0, dropIn:0};
-  workouts.forEach(w => {
-    if (w.is_drop_in)                            cat.dropIn++;
-    else if (w.is_debt && !w.debt_confirmed_at)  cat.debt++;
-    else                                         cat[w.category_at_moment]++;
+  const cat={1:0,2:0,3:0,debt:0,dropIn:0};
+  workouts.forEach(w=>{
+    if (w.is_drop_in)                           cat.dropIn++;
+    else if (w.is_debt&&!w.debt_confirmed_at)   cat.debt++;
+    else                                        cat[w.category_at_moment]++;
   });
-  const ptSum     = cat[1]*RATES.pt[1] + cat[2]*RATES.pt[2] + cat[3]*RATES.pt[3];
-  const dropInSum = cat.dropIn * RATES.drop_in_trainer;
-  const hours     = duties.reduce((s,d) => s + (new Date(d.end_time)-new Date(d.start_time))/3600000, 0);
-  const dutySum   = Math.round(hours * RATES.duty_per_hour);
+  const ptSum     = cat[1]*RATES.pt[1]+cat[2]*RATES.pt[2]+cat[3]*RATES.pt[3];
+  const dropInSum = cat.dropIn*RATES.drop_in_trainer;
+  const hours     = duties.reduce((s,d)=>s+(new Date(d.end_time)-new Date(d.start_time))/3600000,0);
+  const dutySum   = Math.round(hours*RATES.duty_per_hour);
   const childSum  = trainerGroups
-    .filter(tg => tg.group_types?.type==='children')
-    .reduce((s,tg) => s + Math.round((tg.group_types.price_per_month||0)*RATES.group_children_pct), 0);
+    .filter(tg=>tg.group_types?.type==='children')
+    .reduce((s,tg)=>s+Math.round((tg.group_types.price_per_month||0)*RATES.group_children_pct),0);
   const adultSum  = groupSessions
-    .filter(gs => gs.group_types?.billing_model==='headcount')
-    .reduce((s,gs) => s + getAdultGroupRate(gs.headcount), 0);
-  const bonus   = adjustment?.bonus   || 0;
-  const penalty = adjustment?.penalty || 0;
-  const total   = ptSum + dropInSum + dutySum + childSum + adultSum + bonus - penalty;
-  return {cat, hours, ptSum, dropInSum, dutySum, childSum, adultSum, bonus, penalty, total// =============================================
-// db_additions.js — Добавить в конец db.js
-// (вставить ПЕРЕД последней закрывающей скобкой `};` объекта DB)
-// =============================================
-
-  // ─── SUBSCRIPTIONS ───────────────────────────
-
-  /** Активный абонемент клиента */
-  async getActiveSubscription(clientId) {
-    const {data,error} = await sb().from('subscriptions')
-      .select('*, training_goals(*)')
-      .eq('client_id', clientId).eq('is_active', true)
-      .order('created_at', {ascending:false}).limit(1).maybeSingle();
-    if (error) throw error; return data;
-  },
-
-  /** Все абонементы клиента (история) */
-  async getSubscriptionHistory(clientId) {
-    const {data,error} = await sb().from('subscriptions')
-      .select('*, training_goals(*)')
-      .eq('client_id', clientId)
-      .order('created_at', {ascending:false});
-    if (error) throw error; return data||[];
-  },
-
-  /** Создать абонемент */
-  async createSubscription(clientId, trainerId, startDate, initialBalance) {
-    // Закрыть предыдущий активный
-    await sb().from('subscriptions')
-      .update({is_active:false}).eq('client_id',clientId).eq('is_active',true);
-    const {data,error} = await sb().from('subscriptions')
-      .insert({client_id:clientId, trainer_id:trainerId,
-               start_date:startDate, initial_balance:initialBalance, is_active:true})
-      .select().single();
-    if (error) throw error; return data;
-  },
-
-  /** Закрыть абонемент с примечанием */
-  async closeSubscription(subId, closingNote, endDate) {
-    const {data,error} = await sb().from('subscriptions')
-      .update({is_active:false, end_date:endDate, closing_note:closingNote||null})
-      .eq('id',subId).select().single();
-    if (error) throw error; return data;
-  },
-
-  // ─── TRAINING GOALS ──────────────────────────
-
-  async addGoal(subscriptionId, clientId, goalText) {
-    const {data,error} = await sb().from('training_goals')
-      .insert({subscription_id:subscriptionId, client_id:clientId, goal_text:goalText})
-      .select().single();
-    if (error) throw error; return data;
-  },
-
-  async deleteGoal(goalId) {
-    const {error} = await sb().from('training_goals').delete().eq('id',goalId);
-    if (error) throw error;
-  },
-
-  // ─── SESSION NOTES ───────────────────────────
-
-  /** Конспект по workout_id */
-  async getNoteByWorkout(workoutId) {
-    const {data,error} = await sb().from('session_notes')
-      .select('*').eq('workout_id',workoutId).maybeSingle();
-    if (error) throw error; return data;
-  },
-
-  /** Конспекты клиента по абонементу */
-  async getNotesForSubscription(subscriptionId) {
-    const {data,error} = await sb().from('session_notes')
-      .select('*, workouts(workout_date)')
-      .eq('subscription_id',subscriptionId)
-      .order('session_number', {ascending:true});
-    if (error) throw error; return data||[];
-  },
-
-  /** Сохранить / обновить конспект */
-  async upsertNote(workoutId, clientId, trainerId, subscriptionId, accomplishments, nextTask, sessionNumber) {
-    const deadline = new Date(Date.now() + 48*3600000).toISOString();
-    const {data,error} = await sb().from('session_notes')
-      .upsert({
-        workout_id:workoutId, client_id:clientId, trainer_id:trainerId,
-        subscription_id:subscriptionId,
-        accomplishments:accomplishments||null,
-        next_task:nextTask||null,
-        session_number:sessionNumber||null,
-        deadline, updated_at:new Date().toISOString(),
-      }, {onConflict:'workout_id'})
-      .select().single();
-    if (error) throw error; return data;
-  },
-
-  /**
-   * Проверить: есть ли у тренера тренировки этого клиента
-   * без конспекта, старше 48 часов?
-   * Возвращает массив просроченных тренировок.
-   */
-  async getOverdueNotes(clientId, trainerId) {
-    const cutoff = new Date(Date.now() - 48*3600000).toISOString();
-    const {data:workouts} = await sb().from('workouts')
-      .select('id,workout_date').eq('client_id',clientId).eq('trainer_id',trainerId)
-      .eq('is_drop_in',false).eq('is_debt',false)
-      .lt('workout_date', cutoff).order('workout_date',{ascending:false});
-    if (!workouts?.length) return [];
-    const ids = workouts.map(w=>w.id);
-    const {data:notes} = await sb().from('session_notes')
-      .select('workout_id').in('workout_id',ids).not('accomplishments','is',null);
-    const noted = new Set((notes||[]).map(n=>n.workout_id));
-    return workouts.filter(w=>!noted.has(w.id));
-  },
-
-  /** Профиль клиента — полная история */
-  async getClientProfile(clientId, viewerRole, viewerBranches) {
-    const {data:client,error} = await sb().from('clients')
-      .select('*, profiles!trainer_id(fio,branches)').eq('id',clientId).single();
-    if (error) throw error;
-
-    // Доступ: тренер — только свои (проверяется снаружи)
-    // Старший тренер — только если тренер клиента в его филиале
-    if (viewerRole==='senior_trainer') {
-      const trainerBranches = client.profiles?.branches||[];
-      const hasAccess = trainerBranches.some(b=>viewerBranches.includes(b));
-      if (!hasAccess) throw new Error('Нет доступа');
-    }
-
-    const subs = await sb().from('subscriptions')
-      .select('*, training_goals(*)').eq('client_id',clientId)
-      .order('created_at',{ascending:false});
-
-    const workouts = await sb().from('workouts')
-      .select('*, session_notes(*)').eq('client_id',clientId)
-      .order('workout_date',{ascending:false}).limit(50);
-
-    return { client, subscriptions: subs.data||[], workouts: workouts.data||[] };
-  },
-
-  // ─── EVENTS ──────────────────────────────────
-
-  /** Предстоящие события (следующие 30 дней) */
-  async getUpcomingEvents(branch) {
-    const now = new Date().toISOString();
-    const in30 = new Date(Date.now()+30*86400000).toISOString();
-    let q = sb().from('events')
-      .select('*, event_participants(trainer_id), profiles!created_by(fio)')
-      .gte('end_time',now).lte('start_time',in30)
-      .order('start_time');
-    // Фильтр: события для этого филиала или для всех
-    if (branch) {
-      q = q.or(`branch.is.null,branch.eq.${branch}`);
-    }
-    const {data,error} = await q;
-    if (error) throw error; return data||[];
-  },
-
-  /** Проверить: есть ли блокирующие события в указанный период */
-  async getBlockingEvents(branch, startTime, endTime) {
-    const {data,error} = await sb().from('events')
-      .select('id,title,start_time,end_time')
-      .eq('blocks_pool',true)
-      .or(`branch.is.null,branch.eq.${branch}`)
-      .lt('start_time',endTime).gt('end_time',startTime);
-    if (error) throw error; return data||[];
-  },
-
-  async createEvent(fields) {
-    const {data,error} = await sb().from('events').insert(fields)
-      .select('*, profiles!created_by(fio)').single();
-    if (error) throw error; return data;
-  },
-
-  async deleteEvent(id) {
-    const {error} = await sb().from('events').delete().eq('id',id);
-    if (error) throw error;
-  },
-
-  async joinEvent(eventId, trainerId) {
-    const {error} = await sb().from('event_participants')
-      .insert({event_id:eventId, trainer_id:trainerId});
-    if (error && !error.message.includes('unique')) throw error;
-  },
-
-  async leaveEvent(eventId, trainerId) {
-    const {error} = await sb().from('event_participants')
-      .delete().eq('event_id',eventId).eq('trainer_id',trainerId);
-    if (error) throw error;
-  },
-
-// ─── Конец добавлений ─────────────────────────};
+    .filter(gs=>gs.group_types?.billing_model==='headcount')
+    .reduce((s,gs)=>s+getAdultGroupRate(gs.headcount),0);
+  const bonus   = adjustment?.bonus  ||0;
+  const penalty = adjustment?.penalty||0;
+  const total   = ptSum+dropInSum+dutySum+childSum+adultSum+bonus-penalty;
+  return {cat,hours,ptSum,dropInSum,dutySum,childSum,adultSum,bonus,penalty,total};
 }
