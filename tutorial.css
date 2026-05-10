@@ -1,0 +1,90 @@
+/* ── ТУТОРИАЛ ────────────────────────── */
+
+.tutorial-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 20px;
+}
+
+.tutorial-inner {
+  display: flex; flex-direction: column;
+  align-items: center; text-align: center;
+  max-width: 360px; width: 100%;
+  animation: tutIn .25s ease;
+}
+.tutorial-inner.slide-out { animation: tutOut .22s ease forwards; }
+
+@keyframes tutIn  { from { opacity:0; transform:translateY(16px); } }
+@keyframes tutOut { to   { opacity:0; transform:translateY(-12px); } }
+
+.tut-skip-wrap {
+  width: 100%; display: flex; justify-content: flex-end;
+  margin-bottom: 32px;
+}
+.tut-skip {
+  background: none; border: none; color: var(--hint);
+  font-size: 13px; cursor: pointer; padding: 4px 0;
+}
+
+.tut-icon {
+  width: 96px; height: 96px; border-radius: 28px;
+  font-size: 44px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 28px;
+}
+
+.tut-dots {
+  display: flex; gap: 6px; margin-bottom: 24px;
+}
+.tut-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--border); transition: all .2s;
+}
+.tut-dot.active {
+  width: 20px; border-radius: 3px; background: var(--accent);
+}
+
+.tut-title {
+  font-size: 22px; font-weight: 700; margin-bottom: 14px;
+  line-height: 1.2;
+}
+.tut-text {
+  font-size: 15px; color: var(--hint); line-height: 1.65;
+  margin-bottom: 36px;
+}
+.tut-btn {
+  width: 100%; padding: 15px; border-radius: 14px;
+  border: none; color: #fff; font-size: 16px;
+  font-weight: 700; cursor: pointer;
+  font-family: inherit; transition: opacity .15s;
+}
+.tut-btn:active { opacity: .8; }
+
+/* ── СПРАВОЧНИК ──────────────────────── */
+
+.help-section {
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--rs);
+  overflow: hidden;
+}
+.help-title {
+  background: var(--bg2); padding: 10px 14px;
+  font-size: 14px; font-weight: 700;
+  border-bottom: 1px solid var(--border);
+}
+.help-list {
+  list-style: none; padding: 8px 14px;
+}
+.help-list li {
+  font-size: 13px; color: var(--hint);
+  padding: 5px 0; line-height: 1.4;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  padding-left: 14px; position: relative;
+}
+.help-list li:last-child { border-bottom: none; }
+.help-list li::before {
+  content: '·'; position: absolute; left: 0;
+  color: var(--accent); font-weight: 700;
+}
