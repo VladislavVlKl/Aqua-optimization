@@ -86,9 +86,11 @@ async function init() {
   } catch(e) { toast('Ошибка подключения','error'); console.error(e); }
 }
 async function enterApp() {
-  if      (STATE.profile.role==='admin')          renderAdminApp();
-  else if (STATE.profile.role==='senior_trainer') renderSeniorApp();
-  else                                            renderTrainerApp();
+  checkShowTutorial(() => {
+    if      (STATE.profile.role==='admin')          renderAdminApp();
+    else if (STATE.profile.role==='senior_trainer') renderSeniorApp();
+    else                                            renderTrainerApp();
+  });
 }
 
 // ── РЕГИСТРАЦИЯ ───────────────────────────────
@@ -159,6 +161,7 @@ function renderTrainerShell(tab) {
       <div><div class="app-title">🏋️ Лист тренера</div>
         <div class="app-sub">${STATE.profile.fio}</div></div>
       <button class="btn-icon" onclick="openSchedule()">📅</button>
+      <button class="btn-icon" onclick="renderHelpModal()">?</button>
     </div>
     <div id="tab-content" class="tab-content"></div>
     <nav class="bottom-nav">
@@ -1102,7 +1105,10 @@ async function renderSeniorApp() {
   setScreen(`<div class="app-header">
     <div><div class="app-title">⭐ Старший тренер</div>
       <div class="app-sub">${STATE.profile.fio}</div></div>
-    <button class="btn-icon" onclick="openSchedule()">📅</button>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn-icon" onclick="openSchedule()">📅</button>
+      <button class="btn-icon" onclick="renderHelpModal()">?</button>
+    </div>
   </div>
   <div id="tab-content" class="tab-content"></div>
   <nav class="bottom-nav">
@@ -1161,7 +1167,10 @@ function renderAdminApp() {
   setScreen(`<div class="app-header">
     <div><div class="app-title">👑 Координатор</div>
       <div class="app-sub">${STATE.profile.fio}</div></div>
-    <button class="btn-icon" onclick="openSchedule()">📅</button>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn-icon" onclick="openSchedule()">📅</button>
+      <button class="btn-icon" onclick="renderHelpModal()">?</button>
+    </div>
   </div>
   <div id="tab-content" class="tab-content"></div>
   <nav class="bottom-nav">
