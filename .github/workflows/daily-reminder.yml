@@ -1,0 +1,93 @@
+name: Daily Trainer Reminder
+
+on:
+  schedule:
+    # 22:00 Ташкент = 17:00 UTC (UTC+5)
+    - cron: '0 17 * * *'
+  # Ручной запуск для теста — кнопка Run workflow в GitHub
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send reminders to trainers
+        env:
+          BOT_TOKEN:         ${{ secrets.BOT_TOKEN }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          node << 'EOF'
+          const SUPABASE_URL      = process.env.SUPABASE_URL;
+          const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+          const BOT_TOKEN         = process.env.BOT_TOKEN;
+
+          async function supabase(path, params='') {
+            const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}${params}`, {
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+              }
+            });
+            return r.json();
+          }
+
+          async function sendTg(chatId, text) {
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+            });
+          }
+
+          async function main() {
+            const now   = new Date();
+            // Пн=0 … Вс=6 (наш формат)
+            const dow   = (now.getDay() + 6) % 7;
+            const today = now.toISOString().slice(0, 10);
+
+            // Все тренеры с tg_id
+            const trainers = await supabase(
+              'profiles',
+              '?select=id,fio,tg_id&role=in.(trainer,senior_trainer)&tg_id=not.is.null'
+            );
+
+            let sent = 0;
+            for (const trainer of (trainers || [])) {
+              // Слоты на сегодня (только PT и группы)
+              const slots = await supabase(
+                'schedule_slots',
+                `?select=id,slot_type,start_time,client_id,clients(fio),group_types(name)&trainer_id=eq.${trainer.id}&day_of_week=eq.${dow}&active=eq.true&slot_type=in.(pt,group)`
+              );
+              if (!slots?.length) continue;
+
+              // Подтверждения за сегодня
+              const slotIds = slots.map(s => `"${s.id}"`).join(',');
+              const confs   = await supabase(
+                'schedule_confirmations',
+                `?select=slot_id&slot_id=in.(${slotIds})&session_date=eq.${today}`
+              );
+              const confirmedSet = new Set((confs || []).map(c => c.slot_id));
+              const pending = slots.filter(s => !confirmedSet.has(s.id));
+
+              if (!pending.length) continue;
+
+              const lines = pending.map(s => {
+                const name = s.slot_type === 'pt'
+                  ? (s.clients?.fio || 'ПТ')
+                  : (s.group_types?.name || 'Группа');
+                return `• ${s.start_time.slice(0, 5)} — ${name}`;
+              }).join('\n');
+
+              const text =
+                `⚠️ <b>Незакрытые занятия за сегодня</b>\n\n${lines}\n\n` +
+                `Подтвердите или отмените каждое в приложении.`;
+
+              await sendTg(trainer.tg_id, text);
+              sent++;
+            }
+            console.log(`Reminders sent: ${sent}`);
+          }
+
+          main().catch(e => { console.error(e); process.exit(1); });
+          EOF
