@@ -1,5 +1,5 @@
 // =============================================
-// База данных v4 — полный файл
+// База данных v5 — полный файл
 // =============================================
 
 let _sb = null;
@@ -75,20 +75,10 @@ const DB = {
       .order('last_used',{ascending:false,nullsFirst:false});
     if (error) throw error; return data||[];
   },
-  async getAllClientsInBranch(branch) {
-    const {data:t} = await sb().from('profiles').select('id').contains('branches',[branch]);
-    const ids = (t||[]).map(x=>x.id);
-    if (!ids.length) return [];
-    const {data,error} = await sb().from('clients')
-      .select('*, profiles!trainer_id(fio)').in('trainer_id',ids).order('fio');
-    if (error) throw error; return data||[];
-  },
   async addClient(fio, category, trainerId, age, subStart, subEnd) {
     const {data,error} = await sb().from('clients').insert({
       fio:fio.trim(), category, trainer_id:trainerId, balance:0,
-      age: age||null,
-      subscription_start: subStart||null,
-      subscription_end:   subEnd||null,
+      age:age||null, subscription_start:subStart||null, subscription_end:subEnd||null,
     }).select().single();
     if (error) throw error; return data;
   },
@@ -103,16 +93,6 @@ const DB = {
       .update({balance:(cl?.balance||0)+amount}).eq('id',clientId).select().single();
     if (error) throw error; return data;
   },
-  async getExpiringClients(trainerId) {
-    const today = todayStr();
-    const warnDay = new Date(); warnDay.setDate(warnDay.getDate()+SUBSCRIPTION_WARN_DAYS);
-    const warnStr = warnDay.toISOString().slice(0,10);
-    const {data,error} = await sb().from('clients').select('*')
-      .eq('trainer_id',trainerId).not('subscription_end','is',null)
-      .lte('subscription_end',warnStr).gte('subscription_end',today)
-      .order('subscription_end');
-    if (error) throw error; return data||[];
-  },
 
   // ─── WORKOUTS ────────────────────────────────
   async logWorkouts(rows) {
@@ -123,8 +103,8 @@ const DB = {
       const cid = nonDebtNonDropin[0].client_id;
       const {data:cl} = await sb().from('clients').select('balance').eq('id',cid).single();
       await sb().from('clients').update({
-        balance: Math.max(0,(cl?.balance||0)-nonDebtNonDropin.length),
-        last_used: new Date().toISOString(),
+        balance:Math.max(0,(cl?.balance||0)-nonDebtNonDropin.length),
+        last_used:new Date().toISOString(),
       }).eq('id',cid);
     } else {
       await sb().from('clients')
@@ -133,9 +113,8 @@ const DB = {
     const dropInRow = rows.find(r=>r.is_drop_in);
     if (dropInRow) {
       const {data:cl} = await sb().from('clients').select('age').eq('id',dropInRow.client_id).single();
-      if (cl && isChild(cl.age)) {
+      if (cl && isChild(cl.age))
         await sb().from('clients').update({drop_in_used:true}).eq('id',dropInRow.client_id);
-      }
     }
     return data;
   },
@@ -266,7 +245,7 @@ const DB = {
       .select('*').in('slot_id',slotIds).eq('session_date',dateStr);
     const confMap = {};
     (confs||[]).forEach(c=>{ confMap[c.slot_id]=c; });
-    return slots.map(s=>({...s, confirmation: confMap[s.id]||null}));
+    return slots.map(s=>({...s, confirmation:confMap[s.id]||null}));
   },
   async upsertConfirmation(slotId, date, fields) {
     const {data,error} = await sb().from('schedule_confirmations')
@@ -297,12 +276,6 @@ const DB = {
       .eq('client_id',clientId).eq('is_active',true)
       .order('created_at',{ascending:false}).limit(1).maybeSingle();
     if (error) throw error; return data;
-  },
-  async getSubscriptionHistory(clientId) {
-    const {data,error} = await sb().from('subscriptions')
-      .select('*, training_goals(*)')
-      .eq('client_id',clientId).order('created_at',{ascending:false});
-    if (error) throw error; return data||[];
   },
   async createSubscription(clientId, trainerId, startDate, initialBalance) {
     await sb().from('subscriptions')
@@ -338,21 +311,13 @@ const DB = {
       .select('*').eq('workout_id',workoutId).maybeSingle();
     if (error) throw error; return data;
   },
-  async getNotesForSubscription(subscriptionId) {
-    const {data,error} = await sb().from('session_notes')
-      .select('*, workouts(workout_date)')
-      .eq('subscription_id',subscriptionId)
-      .order('session_number',{ascending:true});
-    if (error) throw error; return data||[];
-  },
   async upsertNote(workoutId, clientId, trainerId, subscriptionId, accomplishments, nextTask, sessionNumber) {
     const deadline = new Date(Date.now()+48*3600000).toISOString();
     const {data,error} = await sb().from('session_notes')
       .upsert({
         workout_id:workoutId,client_id:clientId,trainer_id:trainerId,
         subscription_id:subscriptionId,
-        accomplishments:accomplishments||null,
-        next_task:nextTask||null,
+        accomplishments:accomplishments||null,next_task:nextTask||null,
         session_number:sessionNumber||null,
         deadline,updated_at:new Date().toISOString(),
       },{onConflict:'workout_id'})
@@ -377,8 +342,7 @@ const DB = {
       .select('*, profiles!trainer_id(fio,branches)').eq('id',clientId).single();
     if (error) throw error;
     if (viewerRole==='senior_trainer') {
-      const trainerBranches = client.profiles?.branches||[];
-      const hasAccess = trainerBranches.some(b=>(viewerBranches||[]).includes(b));
+      const hasAccess = (client.profiles?.branches||[]).some(b=>(viewerBranches||[]).includes(b));
       if (!hasAccess) throw new Error('Нет доступа');
     }
     const [subs,workouts] = await Promise.all([
@@ -387,12 +351,12 @@ const DB = {
       sb().from('workouts').select('*, session_notes(*)')
         .eq('client_id',clientId).order('workout_date',{ascending:false}).limit(50),
     ]);
-    return { client, subscriptions: subs.data||[], workouts: workouts.data||[] };
+    return { client, subscriptions:subs.data||[], workouts:workouts.data||[] };
   },
 
   // ─── EVENTS ──────────────────────────────────
   async getUpcomingEvents(branch) {
-    const now = new Date().toISOString();
+    const now  = new Date().toISOString();
     const in30 = new Date(Date.now()+30*86400000).toISOString();
     let q = sb().from('events')
       .select('*, event_participants(trainer_id), profiles!created_by(fio)')
@@ -428,6 +392,119 @@ const DB = {
     if (error) throw error;
   },
 
+  // ─── АНАЛИТИКА ───────────────────────────────
+
+  async getAnalytics(year, month, branch=null) {
+    // Текущий месяц
+    const from    = new Date(year,month-1,1).toISOString();
+    const to      = new Date(year,month,  1).toISOString();
+    const fromDay = `${year}-${String(month).padStart(2,'0')}-01`;
+    const toDay   = new Date(year,month,1).toISOString().slice(0,10);
+
+    // Предыдущий месяц
+    const py = month===1 ? year-1 : year;
+    const pm = month===1 ? 12 : month-1;
+    const pfrom    = new Date(py,pm-1,1).toISOString();
+    const pto      = new Date(py,pm,  1).toISOString();
+    const pfromDay = `${py}-${String(pm).padStart(2,'0')}-01`;
+    const ptoDay   = new Date(py,pm,1).toISOString().slice(0,10);
+
+    // Запросы параллельно
+    let currWQ = sb().from('workouts')
+      .select('trainer_id,category_at_moment,is_debt,debt_confirmed_at,is_drop_in')
+      .gte('workout_date',from).lt('workout_date',to);
+    if (branch) currWQ = currWQ.eq('branch',branch);
+
+    let prevWQ = sb().from('workouts')
+      .select('trainer_id,category_at_moment,is_debt,debt_confirmed_at,is_drop_in')
+      .gte('workout_date',pfrom).lt('workout_date',pto);
+    if (branch) prevWQ = prevWQ.eq('branch',branch);
+
+    // Новые абонементы
+    let currSubQ = sb().from('subscriptions')
+      .select('id,client_id,trainer_id').gte('start_date',fromDay).lt('start_date',toDay);
+    let prevSubQ = sb().from('subscriptions')
+      .select('id,client_id,trainer_id').gte('start_date',pfromDay).lt('start_date',ptoDay);
+
+    // Закрытые абонементы (отток)
+    let currChurnQ = sb().from('subscriptions')
+      .select('id').eq('is_active',false).not('end_date','is',null)
+      .gte('end_date',fromDay).lt('end_date',toDay);
+    let prevChurnQ = sb().from('subscriptions')
+      .select('id').eq('is_active',false).not('end_date','is',null)
+      .gte('end_date',pfromDay).lt('end_date',ptoDay);
+
+    // Активные клиенты (хотя бы 1 ПТ в этом месяце)
+    let activeClientsQ = sb().from('workouts')
+      .select('client_id').gte('workout_date',from).lt('workout_date',to);
+    if (branch) activeClientsQ = activeClientsQ.eq('branch',branch);
+
+    // Рейтинг тренеров
+    let rankQ = sb().from('workouts')
+      .select('trainer_id, profiles!trainer_id(fio)')
+      .gte('workout_date',from).lt('workout_date',to)
+      .eq('is_drop_in',false);
+    if (branch) rankQ = rankQ.eq('branch',branch);
+
+    // Дежурства
+    let currDutyQ = sb().from('duties')
+      .select('trainer_id,start_time,end_time')
+      .gte('start_time',from).lt('start_time',to).not('end_time','is',null);
+    if (branch) currDutyQ = currDutyQ.eq('branch',branch);
+    let prevDutyQ = sb().from('duties')
+      .select('start_time,end_time')
+      .gte('start_time',pfrom).lt('start_time',pto).not('end_time','is',null);
+    if (branch) prevDutyQ = prevDutyQ.eq('branch',branch);
+
+    const [cW,pW,cS,pS,cC,pC,aC,rQ,cD,pD] = await Promise.all([
+      currWQ,prevWQ,currSubQ,prevSubQ,currChurnQ,prevChurnQ,
+      activeClientsQ,rankQ,currDutyQ,prevDutyQ,
+    ]);
+
+    // Считаем ПТ (не долговые неподтверждённые)
+    const countPT = (arr) => (arr||[]).filter(w=>!w.is_drop_in&&(!w.is_debt||w.debt_confirmed_at)).length;
+    const currPT  = countPT(cW.data);
+    const prevPT  = countPT(pW.data);
+
+    const currDropIn = (cW.data||[]).filter(w=>w.is_drop_in).length;
+    const prevDropIn = (pW.data||[]).filter(w=>w.is_drop_in).length;
+
+    // Уникальные активные клиенты
+    const currActiveClients = new Set((aC.data||[]).map(w=>w.client_id)).size;
+
+    // Рейтинг тренеров
+    const trainerCounts = {};
+    const trainerNames  = {};
+    ;(rQ.data||[]).forEach(w=>{
+      trainerCounts[w.trainer_id] = (trainerCounts[w.trainer_id]||0)+1;
+      trainerNames[w.trainer_id]  = w.profiles?.fio||'?';
+    });
+    const ranking = Object.entries(trainerCounts)
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,10)
+      .map(([id,count])=>({fio:trainerNames[id],count}));
+
+    // Часы дежурств
+    const sumHours = (arr) => (arr||[]).reduce((s,d)=>
+      s+(new Date(d.end_time)-new Date(d.start_time))/3600000, 0);
+    const currDutyHours = sumHours(cD.data);
+    const prevDutyHours = sumHours(pD.data);
+
+    return {
+      currPT, prevPT,
+      currDropIn, prevDropIn,
+      currNewClients: (cS.data||[]).length,
+      prevNewClients: (pS.data||[]).length,
+      currChurn: (cC.data||[]).length,
+      prevChurn: (pC.data||[]).length,
+      currActiveClients,
+      currDutyHours, prevDutyHours,
+      ranking,
+      month: { year, month },
+      prevMonth: { year:py, month:pm },
+    };
+  },
+
   // ─── REPORTS ─────────────────────────────────
   async getSummary(year, month, branch=null) {
     const from    = new Date(year,month-1,1).toISOString();
@@ -435,7 +512,7 @@ const DB = {
     const fromDay = `${year}-${String(month).padStart(2,'0')}-01`;
     const toDay   = new Date(year,month,1).toISOString().slice(0,10);
 
-    let wq = sb().from('workouts')
+    let wq  = sb().from('workouts')
       .select('trainer_id,category_at_moment,branch,is_debt,debt_confirmed_at,is_drop_in')
       .gte('workout_date',from).lt('workout_date',to);
     if (branch) wq = wq.eq('branch',branch);
@@ -505,9 +582,9 @@ const DB = {
 
   // ─── КОНТРОЛЬ ────────────────────────────────
   async getControlData() {
-    const today   = todayStr();
-    const warnDay = new Date(); warnDay.setDate(warnDay.getDate()+SUBSCRIPTION_WARN_DAYS);
-    const warnStr = warnDay.toISOString().slice(0,10);
+    const today      = todayStr();
+    const warnDay    = new Date(); warnDay.setDate(warnDay.getDate()+SUBSCRIPTION_WARN_DAYS);
+    const warnStr    = warnDay.toISOString().slice(0,10);
     const threeDaysAgo = new Date(); threeDaysAgo.setDate(threeDaysAgo.getDate()-3);
     const [expiring,oldDebt,childDropin,batchWO,inactive] = await Promise.all([
       sb().from('clients').select('*, profiles!trainer_id(fio)')
@@ -545,9 +622,9 @@ const DB = {
 function calcSalary({workouts=[], duties=[], trainerGroups=[], groupSessions=[], adjustment=null}) {
   const cat={1:0,2:0,3:0,debt:0,dropIn:0};
   workouts.forEach(w=>{
-    if (w.is_drop_in)                           cat.dropIn++;
-    else if (w.is_debt&&!w.debt_confirmed_at)   cat.debt++;
-    else                                        cat[w.category_at_moment]++;
+    if (w.is_drop_in)                          cat.dropIn++;
+    else if (w.is_debt&&!w.debt_confirmed_at)  cat.debt++;
+    else                                       cat[w.category_at_moment]++;
   });
   const ptSum     = cat[1]*RATES.pt[1]+cat[2]*RATES.pt[2]+cat[3]*RATES.pt[3];
   const dropInSum = cat.dropIn*RATES.drop_in_trainer;
