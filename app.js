@@ -1178,20 +1178,23 @@ function renderAdminApp() {
     <button class="nav-btn" onclick="adminTab('staff')"><span>👥</span>Персонал</button>
     <button class="nav-btn" onclick="adminTab('branches')"><span>🏢</span>Филиалы</button>
     <button class="nav-btn" onclick="adminTab('groups')"><span>🏊</span>Группы</button>
+    <button class="nav-btn" onclick="adminTab('notifications')"><span>🔔</span>Уведомл.</button>
     <button class="nav-btn" onclick="adminTab('events')"><span>🏆</span>События</button>
     <button class="nav-btn" onclick="adminTab('control')"><span>🔍</span>Контроль</button>
   </nav>`);
   adminTab('summary');
 }
 function adminTab(tab) {
-  $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',['summary','analytics','staff','branches','groups','events','control'][i]===tab));
-  if (tab==='summary')   renderAdminSummary();
-  if (tab==='analytics') renderAdminAnalytics();
-  if (tab==='staff')     renderAdminStaff();
-  if (tab==='branches')  renderAdminBranches();
-  if (tab==='groups')    renderAdminGroups();
-  if (tab==='events')    renderEventsTab();
-  if (tab==='control')   renderAdminControl();
+  $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',
+    ['summary','analytics','staff','branches','groups','notifications','events','control'][i]===tab));
+  if (tab==='summary')       renderAdminSummary();
+  if (tab==='analytics')     renderAdminAnalytics();
+  if (tab==='staff')         renderAdminStaff();
+  if (tab==='branches')      renderAdminBranches();
+  if (tab==='groups')        renderAdminGroups();
+  if (tab==='notifications') renderAdminNotifications();
+  if (tab==='events')        renderEventsTab();
+  if (tab==='control')       renderAdminControl();
 }
 
 // ─ ADMIN: АНАЛИТИКА ──────────────────────────
