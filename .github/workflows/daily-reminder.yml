@@ -2,82 +2,17 @@ name: Daily Trainer Reminder
 
 on:
   schedule:
-    - cron: '0 17 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
   remind:
     runs-on: ubuntu-latest
     steps:
-      - name: Send reminders to trainers
+      - uses: actions/checkout@v4
+      - name: Run reminder
         env:
           BOT_TOKEN:         ${{ secrets.BOT_TOKEN }}
           SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          node - << 'SCRIPT'
-          const BASE = process.env.SUPABASE_URL + '/rest/v1';
-          const KEY  = process.env.SUPABASE_ANON_KEY;
-          const BOT  = process.env.BOT_TOKEN;
-          const H    = { 'apikey': KEY, 'Authorization': 'Bearer ' + KEY };
-
-          async function get(path) {
-            const r = await fetch(BASE + path, { headers: H });
-            const d = await r.json();
-            if (!r.ok) { console.error('API error:', path, JSON.stringify(d)); return []; }
-            return Array.isArray(d) ? d : [];
-          }
-
-          async function tg(chatId, text) {
-            const r = await fetch('https://api.telegram.org/bot' + BOT + '/sendMessage', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-            });
-            const d = await r.json();
-            if (!d.ok) console.error('TG error', chatId, d.description);
-            return d.ok;
-          }
-
-          async function main() {
-            const now   = new Date();
-            const dow   = (now.getDay() + 6) % 7;
-            const today = now.toISOString().slice(0, 10);
-            console.log('Running for date:', today, 'dow:', dow);
-
-            const trainers = await get('/profiles?select=id,fio,tg_id&role=in.(trainer,senior_trainer)&tg_id=not.is.null');
-            console.log('Trainers with tg_id:', trainers.length);
-
-            let sent = 0;
-            for (const tr of trainers) {
-              const slots = await get(
-                '/schedule_slots?select=id,slot_type,start_time' +
-                '&trainer_id=eq.' + tr.id +
-                '&day_of_week=eq.' + dow +
-                '&active=eq.true' +
-                '&slot_type=in.(pt,group)'
-              );
-              if (!slots.length) continue;
-
-              const ids   = slots.map(s => s.id).join(',');
-              const confs = await get('/schedule_confirmations?select=slot_id&slot_id=in.(' + ids + ')&session_date=eq.' + today);
-              const done  = new Set(confs.map(c => c.slot_id));
-              const pend  = slots.filter(s => !done.has(s.id));
-              if (!pend.length) continue;
-
-              const lines = pend.map(s =>
-                '\u2022 ' + s.start_time.slice(0,5) + ' \u2014 ' +
-                (s.slot_type === 'pt' ? '\u041f\u0435\u0440\u0441\u043e\u043d\u0430\u043b\u044c\u043d\u0430\u044f \u0442\u0440\u0435\u043d\u0438\u0440\u043e\u0432\u043a\u0430' : '\u0413\u0440\u0443\u043f\u043f\u043e\u0432\u043e\u0435 \u0437\u0430\u043d\u044f\u0442\u0438\u0435')
-              ).join('\n');
-
-              const msg =
-                '\u26a0\ufe0f <b>\u041d\u0435\u0437\u0430\u043a\u0440\u044b\u0442\u044b\u0435 \u0437\u0430\u043d\u044f\u0442\u0438\u044f \u0437\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f</b>\n\n' +
-                lines + '\n\n' +
-                '\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u0435 \u0438\u043b\u0438 \u043e\u0442\u043c\u0435\u043d\u0438\u0442\u0435 \u0432 AquaDesk.';
-
-              if (await tg(tr.tg_id, msg)) { console.log('Sent:', tr.fio); sent++; }
-            }
-            console.log('Done. Sent:', sent);
-          }
-          main().catch(e => { console.error(e); process.exit(1); });
-          SCRIPT
+        run: node remind.js
