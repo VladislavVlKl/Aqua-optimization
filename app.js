@@ -150,44 +150,197 @@ function pinKey(k) {
 // ── ТРЕНЕР: ОБОЛОЧКА ──────────────────────────
 async function renderTrainerApp() {
   setupBack(null);
-  renderTrainerShell('workouts');
+  renderTrainerShell('home');
 }
 
 function renderTrainerShell(tab) {
   STATE.currentTab=tab;
   setScreen(`
     <div class="app-header">
-      <div><div class="app-title">🏋️ Лист тренера</div>
+      <div><div class="app-title">🏋️ AquaDesk</div>
         <div class="app-sub">${STATE.profile.fio}</div></div>
-      <button class="btn-icon" onclick="openSchedule()">📅</button>
-      <button class="btn-icon" onclick="renderHelpModal()">?</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn-icon" onclick="openSchedule()">📅</button>
+        <button class="btn-icon" onclick="renderHelpModal()">?</button>
+      </div>
     </div>
     <div id="tab-content" class="tab-content"></div>
     <nav class="bottom-nav">
-      <button class="nav-btn" onclick="switchTab('workouts')"><span>📋</span>Списание</button>
-      <button class="nav-btn" onclick="switchTab('schedule')"><span>🗓</span>Расписание</button>
+      <button class="nav-btn" onclick="switchTab('home')"><span>🏠</span>Главная</button>
+      <button class="nav-btn" onclick="switchTab('clients')"><span>👥</span>Клиенты</button>
       <button class="nav-btn" onclick="switchTab('today')"><span>✅</span>Сегодня</button>
-      <button class="nav-btn" onclick="switchTab('duty')"><span>⏱</span>Дежурство</button>
-      <button class="nav-btn" onclick="switchTab('events')"><span>🏆</span>События</button>
+      <button class="nav-btn" onclick="switchTab('schedule')"><span>📅</span>Расписание</button>
       <button class="nav-btn" onclick="switchTab('report')"><span>📊</span>Отчёт</button>
+      <button class="nav-btn" onclick="switchTab('events')"><span>🏆</span>События</button>
     </nav>`);
   switchTab(tab);
 }
 
 function switchTab(tab) {
   STATE.currentTab=tab;
-  const tabs=['workouts','schedule','today','duty','events','report'];
+  const tabs=['home','clients','today','schedule','report','events'];
   $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',tabs[i]===tab));
-  if (tab==='workouts')  renderWorkoutsTab();
-  if (tab==='schedule')  renderScheduleTab();
-  if (tab==='today')     renderTodayTab();
-  if (tab==='duty')      renderDutyTab();
-  if (tab==='events')    renderEventsTab();
-  if (tab==='report')    renderReportTab();
+  if (tab==='home')     renderHomeTab();
+  if (tab==='clients')  renderClientsTab();
+  if (tab==='today')    renderTodayTab();
+  if (tab==='schedule') renderScheduleTab();
+  if (tab==='report')   renderReportTab();
+  if (tab==='events')   renderEventsTab();
+}
+
+// ── ТАБ: ГЛАВНАЯ (Списание + Дежурство) ──────
+async function renderHomeTab() {
+  $('#tab-content').innerHTML=`<div class="center-screen"><div class="spinner"></div></div>`;
+  const clients  = await DB.getClients(STATE.profile.id);
+  const branches = STATE.profile.branches||[];
+  const now      = new Date();
+  const expiring = clients.filter(c=>{
+    const d=daysUntil(c.subscription_end);
+    return d!==null&&d<=SUBSCRIPTION_WARN_DAYS&&d>=0;
+  });
+  const duties   = await DB.getDuties(STATE.profile.id,now.getFullYear(),now.getMonth()+1);
+  const defStart = [now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),
+    String(now.getDate()).padStart(2,'0')].join('-')+'T07:00';
+  const defEnd   = now.toISOString().slice(0,16);
+
+  $('#tab-content').innerHTML=`<div class="tab-pad">
+
+    ${expiring.length?`<div class="warn-banner">
+      ⚠️ Абонемент истекает: ${expiring.map(c=>`<b>${c.fio.split(' ')[0]}</b> (${daysUntil(c.subscription_end)} дн.)`).join(', ')}
+    </div>`:''}
+
+    <!-- БЛОК: Списание ПТ -->
+    <div class="home-block">
+      <div class="home-block-title">📋 Списание ПТ</div>
+      ${branchSelect('sel-branch',branches)}
+      <div class="form-group"><label>Клиент</label>
+        <select id="wk-client" onchange="onClientChange(this)">
+          <option value="">— выберите —</option>
+          ${clients.map(c=>{
+            const days=daysUntil(c.subscription_end);
+            const warn=days!==null&&days<=SUBSCRIPTION_WARN_DAYS&&days>=0?' ⚠️':'';
+            return `<option value="${c.id}" data-cat="${c.category}" data-bal="${c.balance}"
+              data-age="${c.age||''}" data-di="${c.drop_in_used}">
+              ${c.fio}${warn} (кат.${c.category}, баланс: ${c.balance})</option>`;
+          }).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>Тип тренировки</label>
+        <select id="wk-type" onchange="onWkTypeChange(this)">
+          <option value="regular">Обычная ПТ</option>
+          <option value="dropin">Разовое (${fmt(RATES.drop_in_price)} сум)</option>
+          <option value="debt">В долг</option>
+        </select>
+      </div>
+      <div id="wk-regular-opts">
+        <div class="form-group"><label>Количество ПТ</label>
+          <select id="wk-count" onchange="renderDateFields()">
+            ${[1,2,3,4,5].map(n=>`<option>${n}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="wk-dates"></div>
+      <div id="wk-notes-wrap" style="display:none" class="form-group">
+        <label>Примечание <span class="required">*</span></label>
+        <textarea id="wk-notes" rows="2" placeholder="Причина пакетного списания"></textarea>
+      </div>
+      <div id="overdue-warning"></div>
+      <button class="btn btn-primary btn-full" onclick="doLogWorkout()">Списать</button>
+    </div>
+
+    <!-- БЛОК: Дежурство -->
+    <div class="home-block" style="margin-top:16px">
+      <div class="home-block-title">⏱ Запись дежурства</div>
+      <div class="form-group" style="display:flex;gap:10px">
+        <div style="flex:1"><label>Начало</label>
+          <input type="datetime-local" id="duty-start" value="${defStart}"></div>
+        <div style="flex:1"><label>Конец</label>
+          <input type="datetime-local" id="duty-end" value="${defEnd}"></div>
+      </div>
+      ${branchSelect('duty-branch',branches)}
+      <button class="btn btn-full" style="background:var(--card);border:1px solid var(--border)"
+        onclick="doLogDutyHome()">Записать дежурство</button>
+      ${duties.length?`<div class="hint" style="margin-top:10px">
+        За этот месяц: ${duties.length} дежурств ·
+        ${fmt(Math.round(duties.reduce((s,d)=>s+hoursFromDuty(d.start_time,d.end_time),0)*RATES.duty_per_hour))} сум
+      </div>`:''}
+    </div>
+
+  </div>`;
+  renderDateFields();
+}
+
+async function doLogDutyHome() {
+  const start  = document.getElementById('duty-start')?.value;
+  const end    = document.getElementById('duty-end')?.value;
+  const branch = document.getElementById('duty-branch')?.value||STATE.profile.branches?.[0]||'';
+  if (!start||!end) return toast('Введите время','error');
+  if (start>=end)   return toast('Конец позже начала','error');
+  if (!branch)      return toast('Выберите филиал','error');
+  const h = hoursFromDuty(new Date(start),new Date(end));
+  if (h>16) return toast('Не более 16 часов','error');
+  try {
+    await sb().from('duties').insert({
+      trainer_id:STATE.profile.id,branch,
+      start_time:new Date(start).toISOString(),
+      end_time:new Date(end).toISOString(),
+    });
+    toast(`✅ ${h.toFixed(1)}ч = ${fmt(Math.round(h*RATES.duty_per_hour))} сум`,'success');
+    renderHomeTab();
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
+// ── ТАБ: КЛИЕНТЫ ──────────────────────────────
+async function renderClientsTab() {
+  $('#tab-content').innerHTML=`<div class="center-screen"><div class="spinner"></div></div>`;
+  const clients = await DB.getClients(STATE.profile.id);
+
+  // Считаем незакрытые конспекты
+  let pendingNotes = 0;
+  for (const c of clients.slice(0,10)) {
+    const overdue = await DB.getOverdueNotes(c.id, STATE.profile.id);
+    pendingNotes += overdue.length;
+  }
+
+  $('#tab-content').innerHTML=`<div class="tab-pad">
+    <div class="section-header">
+      <h3>Мои клиенты</h3>
+      <button class="btn btn-sm" onclick="renderAddClientModal()">+ Клиент</button>
+    </div>
+
+    ${pendingNotes>0?`<div class="warn-banner" style="cursor:pointer">
+      📝 ${pendingNotes} незакрытых конспектов — нажмите на клиента чтобы написать
+    </div>`:''}
+
+    ${!clients.length?'<div class="empty-state">👥<p>Клиентов нет.<br>Нажмите + Клиент чтобы добавить.</p></div>':
+      clients.map(c=>{
+        const days = daysUntil(c.subscription_end);
+        const warn = days!==null&&days<=SUBSCRIPTION_WARN_DAYS&&days>=0;
+        const exp  = days!==null&&days<0;
+        return `<div class="client-row" onclick="renderClientProfile('${c.id}','clients')">
+          <div>
+            <div class="cr-name">
+              ${c.fio}
+              ${warn?'<span class="warn-dot">⚠️</span>':''}
+              ${exp?'<span class="exp-dot">❌</span>':''}
+            </div>
+            <div class="cr-meta">
+              Кат.${c.category} · Баланс: ${c.balance}
+              ${c.age?' · '+c.age+' лет':''}
+              ${c.subscription_end?' · до '+c.subscription_end:''}
+            </div>
+          </div>
+          <span class="cr-arrow">›</span>
+        </div>`;
+      }).join('')}
+  </div>`;
 }
 
 // ── ТАБ: СПИСАНИЕ ─────────────────────────────
 async function renderWorkoutsTab() {
+  // Алиас — открывает главную
+  renderHomeTab();
+}
   $('#tab-content').innerHTML=`<div class="center-screen"><div class="spinner"></div></div>`;
   const clients  = await DB.getClients(STATE.profile.id);
   const branches = STATE.profile.branches||[];
@@ -835,8 +988,8 @@ async function loadTrainerReport(year,month) {
           <div class="s-val">${fmt(sal.total)}</div><div class="s-lbl">К выплате (сум)</div>
         </div>
       </div>
-      <h4>Тренировки</h4>
-      ${!workouts.length?'<p class="hint">Нет записей</p>':workouts.map(w=>`
+      <h4>Тренировки за месяц</h4>
+      ${!workouts.length?'<p class="hint">Нет записей за этот период</p>':workouts.map(w=>`
         <div class="history-item">
           <div class="hi-main">
             <span class="hi-client">${w.clients?.fio||'—'}</span>
@@ -846,10 +999,14 @@ async function loadTrainerReport(year,month) {
             ${w.is_debt&&w.debt_confirmed_at?'<span class="paid-badge">Оплачено</span>':''}
           </div>
           <div class="hi-sub">${fmtDT(w.workout_date)} · ${w.branch}</div>
-          ${w.is_debt&&!w.debt_confirmed_at?`
-            <button class="btn btn-sm btn-primary" onclick="doConfirmDebt('${w.id}','${w.client_id}')">Подтвердить оплату</button>`:''}
-          ${canEdit(w.created_at)&&!w.is_debt?`
-            <button class="btn btn-sm btn-danger" onclick="doDeleteWorkout('${w.id}')">Удалить</button>`:''}
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            ${w.is_debt&&!w.debt_confirmed_at?`
+              <button class="btn btn-sm btn-primary" onclick="doConfirmDebt('${w.id}','${w.client_id}')">Подтвердить оплату</button>`:''}
+            ${canEdit(w.created_at)&&!w.is_debt?`
+              <button class="btn btn-sm btn-danger" onclick="doDeleteWorkout('${w.id}')">Удалить</button>`:''}
+            <button class="btn btn-sm" onclick="renderClientProfile('${w.client_id}','report')" style="background:var(--card);border:1px solid var(--border)">
+              👤 Профиль</button>
+          </div>
         </div>`).join('')}`;
   } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
 }
@@ -865,8 +1022,8 @@ async function doDeleteWorkout(id) {
 }
 
 // ── ПРОФИЛЬ КЛИЕНТА ───────────────────────────
-async function renderClientProfile(clientId) {
-  setupBack(()=>{renderWorkoutsTab();setupBack(null);});
+async function renderClientProfile(clientId, backTab='home') {
+  setupBack(()=>{ switchTab(backTab); setupBack(null); });
   $('#tab-content').innerHTML=`<div class="center-screen"><div class="spinner"></div></div>`;
   try {
     const {client,subscriptions,workouts}=await DB.getClientProfile(
@@ -1102,7 +1259,7 @@ async function doExportSummary(year,month,branch) {
 async function renderSeniorApp() {
   setupBack(null);
   setScreen(`<div class="app-header">
-    <div><div class="app-title">⭐ Старший тренер</div>
+    <div><div class="app-title">⭐ AquaDesk</div>
       <div class="app-sub">${STATE.profile.fio}</div></div>
     <div style="display:flex;gap:6px;align-items:center">
       <button class="btn-icon" onclick="openSchedule()">📅</button>
@@ -1111,21 +1268,24 @@ async function renderSeniorApp() {
   </div>
   <div id="tab-content" class="tab-content"></div>
   <nav class="bottom-nav">
-    <button class="nav-btn" onclick="seniorTab('workouts')"><span>📋</span>Списание</button>
-    <button class="nav-btn" onclick="seniorTab('schedule')"><span>🗓</span>Расписание</button>
+    <button class="nav-btn" onclick="seniorTab('home')"><span>🏠</span>Главная</button>
+    <button class="nav-btn" onclick="seniorTab('clients')"><span>👥</span>Клиенты</button>
     <button class="nav-btn" onclick="seniorTab('today')"><span>✅</span>Сегодня</button>
-    <button class="nav-btn" onclick="seniorTab('duty')"><span>⏱</span>Дежурство</button>
+    <button class="nav-btn" onclick="seniorTab('schedule')"><span>📅</span>Расписание</button>
+    <button class="nav-btn" onclick="seniorTab('report')"><span>📊</span>Отчёт</button>
     <button class="nav-btn" onclick="seniorTab('events')"><span>🏆</span>События</button>
-    <button class="nav-btn" onclick="seniorTab('branch')"><span>📊</span>Филиал</button>
+    <button class="nav-btn" onclick="seniorTab('branch')"><span>🏢</span>Филиал</button>
   </nav>`);
-  seniorTab('workouts');
+  seniorTab('home');
 }
 function seniorTab(tab) {
-  $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',['workouts','schedule','today','duty','events','branch'][i]===tab));
-  if (tab==='workouts') renderWorkoutsTab();
-  if (tab==='schedule') renderScheduleTab();
+  const tabs=['home','clients','today','schedule','report','events','branch'];
+  $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',tabs[i]===tab));
+  if (tab==='home')     renderHomeTab();
+  if (tab==='clients')  renderClientsTab();
   if (tab==='today')    renderTodayTab();
-  if (tab==='duty')     renderDutyTab();
+  if (tab==='schedule') renderScheduleTab();
+  if (tab==='report')   renderReportTab();
   if (tab==='events')   renderEventsTab();
   if (tab==='branch')   renderBranchReport();
 }
