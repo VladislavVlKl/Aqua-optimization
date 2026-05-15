@@ -134,9 +134,13 @@ async function renderAdminNotifications() {
           <div class="notif-history-item">
             <div class="notif-h-row">
               <span class="notif-h-name">${n.recipient_name||n.recipient_tg_id}</span>
-              <span class="notif-status-badge ${n.status}">${
-                n.status==='sent'?'✓ Отправлено':n.status==='failed'?'✗ Ошибка':'⏳ Ожидает'
-              }</span>
+              <div style="display:flex;gap:6px;align-items:center">
+                <span class="notif-status-badge ${n.status}">${
+                  n.status==='sent'?'✓ Отправлено':n.status==='failed'?'✗ Ошибка':'⏳ Ожидает'
+                }</span>
+                ${n.status==='pending'?`<button class="btn-icon" style="color:var(--danger);font-size:14px"
+                  onclick="doDeleteNotif('${n.id}')" title="Удалить">✕</button>`:''}
+              </div>
             </div>
             <div class="notif-h-msg hint">${n.message.slice(0,80)}${n.message.length>80?'…':''}</div>
             <div class="notif-h-time hint">${fmtDT(n.scheduled_for)}</div>
@@ -215,4 +219,14 @@ async function doSendNotif(trainers, branchNames) {
     document.getElementById('notif-preview').style.display = 'none';
     setTimeout(()=>renderAdminNotifications(), 1000);
   } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
+async function doDeleteNotif(id) {
+  if (!confirm('Удалить уведомление из очереди?')) return;
+  try {
+    const {error} = await sb().from('notifications_queue').delete().eq('id', id);
+    if (error) throw error;
+    toast('Удалено ✅', 'success');
+    renderAdminNotifications();
+  } catch(e) { toast('Ошибка', 'error'); }
 }
