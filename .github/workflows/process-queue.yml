@@ -1,1 +1,18 @@
-/
+name: Process Notification Queue
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Process queue
+        env:
+          BOT_TOKEN:         ${{ secrets.BOT_TOKEN }}
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node process-queue.js
