@@ -1409,16 +1409,16 @@ async function renderClientProfile(clientId, backTab='home') {
         <div class="sub-card active-sub">
           <div class="sub-card-header">
             ${(()=>{
-  const used = (activeSub.initial_balance||0) - (client.balance||0);
-  const total = activeSub.initial_balance||0;
-  const pct = total > 0 ? Math.round(used/total*100) : 0;
-  return `<div>
+  const remaining = client.balance||0;
+const total = activeSub.initial_balance||0;
+const pct = total > 0 ? Math.round(remaining/total*100) : 0;
+return `<div>
     <span>📅 Абонемент с ${activeSub.start_date}</span>
     ${total>0?`<div style="margin-top:6px">
       <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--hint);margin-bottom:4px">
-        <span>Использовано: ${used} из ${total}</span><span>${pct}%</span></div>
+        <span>Осталось: ${remaining} из ${total}</span><span>${pct}%</span></div>
       <div style="height:5px;background:var(--border);border-radius:3px">
-        <div style="width:${Math.min(pct,100)}%;height:100%;background:${pct>=90?'var(--danger)':pct>=70?'var(--warn)':'var(--accent)'};border-radius:3px;transition:width .3s"></div>
+        <div style="width:${Math.min(pct,100)}%;height:100%;background:${pct<=20?'var(--danger)':pct<=40?'var(--warn)':'var(--accent)'};border-radius:3px;transition:width .3s"></div>
       </div></div>`:''}
   </div>`;
 })()}
