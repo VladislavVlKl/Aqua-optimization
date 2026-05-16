@@ -623,11 +623,15 @@ async function loadScheduleWeek(offset) {
     events.forEach(ev=>{
       const startDate = new Date(ev.start_time);
       const dow = (startDate.getDay()+6)%7;
-      const startH = startDate.getUTCHours()+5; // Ташкент UTC+5
-      const adjH = startH % 24;
+      // Используем локальное время (Supabase хранит в UTC, +5 Ташкент)
+      const h   = startDate.getUTCHours() + 5;
+      const adjH = h % 24;
       const hKey = `${String(adjH).padStart(2,'0')}:00`;
-      if (grid[dow]?.[hKey] !== undefined)
-        grid[dow][hKey].push({...ev,_isEvent:true,_date:ev.start_time.slice(0,10)});
+      const fallback = adjH < 7 ? '07:00' : adjH > 23 ? '22:00' : hKey;
+      if (grid[dow]) {
+        const key = grid[dow][hKey] !== undefined ? hKey : fallback;
+        if (grid[dow][key]) grid[dow][key].push({...ev,_isEvent:true,_date:ev.start_time.slice(0,10)});
+      }
     });
 
     // Заголовки дней с датами
@@ -1284,6 +1288,46 @@ async function doInitiateTransfer(clientId, fromTrainerId) {
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
 
+// Редактирование данных клиента
+function renderEditClientModal(clientId, fioEnc, cat, age, subStart, subEnd) {
+  const fio = decodeURIComponent(fioEnc);
+  const m = el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>Редактировать клиента</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <div class="form-group"><label>ФИО</label>
+      <input id="ec-fio" value="${fio}"></div>
+    <div class="form-group"><label>Категория</label>
+      <select id="ec-cat">
+        <option value="1" ${cat==1?'selected':''}>1</option>
+        <option value="2" ${cat==2?'selected':''}>2</option>
+        <option value="3" ${cat==3?'selected':''}>3</option>
+      </select></div>
+    <div class="form-group"><label>Возраст (лет)</label>
+      <input id="ec-age" type="number" min="1" max="99" value="${age}"></div>
+    <div class="form-group"><label>Начало абонемента</label>
+      <input id="ec-sub-start" type="date" value="${subStart}"></div>
+    <div class="form-group"><label>Конец абонемента</label>
+      <input id="ec-sub-end" type="date" value="${subEnd}"></div>
+    <button class="btn btn-primary btn-full" onclick="doEditClient('${clientId}')">Сохранить</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doEditClient(clientId) {
+  const fio      = document.getElementById('ec-fio')?.value.trim();
+  const category = parseInt(document.getElementById('ec-cat')?.value)||1;
+  const age      = parseInt(document.getElementById('ec-age')?.value)||null;
+  const subStart = document.getElementById('ec-sub-start')?.value||null;
+  const subEnd   = document.getElementById('ec-sub-end')?.value||null;
+  if (!fio) return toast('Введите ФИО','error');
+  try {
+    await DB.updateClient(clientId, {fio, category, age, subscription_start:subStart, subscription_end:subEnd});
+    document.querySelector('.modal-overlay')?.remove();
+    toast('✅ Данные сохранены','success');
+    renderClientProfile(clientId, STATE.currentTab||'clients');
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
 // Административная передача (координатор)
 async function renderAdminTransferModal(clientId, clientFio) {
   const profiles = await DB.getAllProfiles();
@@ -1335,24 +1379,30 @@ async function renderClientProfile(clientId, backTab='home') {
     const activeSub=subscriptions.find(s=>s.is_active);
     const pastSubs=subscriptions.filter(s=>!s.is_active);
 
-    // Права: редактировать может только тренер этого клиента
+    // Права: редактировать может тренер-владелец И координатор
     const isOwnClient = client.trainer_id === STATE.profile.id;
     const canEdit     = isOwnClient && ['trainer','senior_trainer'].includes(STATE.profile.role);
+    const canEditInfo = canEdit || isAdmin; // редактировать данные клиента
 
     $('#tab-content').innerHTML=`<div class="tab-pad">
       <div class="client-header">
         <div class="client-avatar">${client.fio.charAt(0)}</div>
-        <div>
+        <div style="flex:1">
           <div class="client-name">${client.fio}</div>
           <div class="client-meta">${client.age?client.age+' лет · ':''}Кат.${client.category} · Баланс: ${client.balance}</div>
           <div class="client-meta">Тренер: ${client.profiles?.fio||'—'}</div>
-          ${!canEdit?'<div class="hint" style="margin-top:4px;font-size:11px">👁 Только просмотр</div>':''}
-          ${canEdit?`<button class="btn btn-sm" style="margin-top:8px;background:var(--card);border:1px solid var(--border)"
-            onclick="renderTransferClientModal('${clientId}','${client.fio}',${STATE.profile.id})">
-            🔄 Передать клиента</button>`:''}
-          ${isAdmin?`<button class="btn btn-sm" style="margin-top:8px;background:var(--card);border:1px solid var(--border)"
-            onclick="renderAdminTransferModal('${clientId}','${client.fio}')">
-            🔄 Передать (административно)</button>`:''}
+          ${!canEdit&&!isAdmin?'<div class="hint" style="margin-top:4px;font-size:11px">👁 Только просмотр</div>':''}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            ${canEditInfo?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+              onclick="renderEditClientModal('${clientId}','${encodeURIComponent(client.fio)}',${client.category},'${client.age||''}','${client.subscription_start||''}','${client.subscription_end||''}')">
+              ✏️ Редактировать</button>`:''}
+            ${canEdit?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+              onclick="renderTransferClientModal('${clientId}','${client.fio}',${STATE.profile.id})">
+              🔄 Передать</button>`:''}
+            ${isAdmin?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+              onclick="renderAdminTransferModal('${clientId}','${client.fio}')">
+              🔄 Передать (адм.)</button>`:''}
+          </div>
         </div>
       </div>
       ${activeSub?`
@@ -2000,9 +2050,15 @@ async function loadStaffList() {
       profiles.map(t=>`<div class="staff-card">
         <div class="staff-info">
           <div class="staff-fio">${t.fio}</div>
-          <div class="staff-meta">${ROLE_LBL[t.role]||t.role} · ${t.tg_id?'✅':'⏳'} · ${(t.branches||[]).join(', ')||'—'}</div>
+          <div class="staff-meta">${ROLE_LBL[t.role]||t.role} · ${t.tg_id?'✅ В системе':'⏳ Не входил'} · ${(t.branches||[]).join(', ')||'—'}</div>
         </div>
-        <button class="btn btn-sm" onclick="renderEditTrainerModal(${t.id},'${encodeURIComponent(t.fio)}','${(t.branches||[]).join(',')}','${t.role}')">✏️</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="renderEditTrainerModal(${t.id},'${encodeURIComponent(t.fio)}','${(t.branches||[]).join(',')}','${t.role}')">✏️</button>
+          <button class="btn btn-sm" style="background:rgba(245,158,11,.15);color:#f59e0b"
+            onclick="doArchiveTrainer(${t.id},'${encodeURIComponent(t.fio)}')">📦</button>
+          <button class="btn btn-sm btn-danger"
+            onclick="doDeleteTrainer(${t.id},'${encodeURIComponent(t.fio)}')">🗑</button>
+        </div>
       </div>`).join('');
   } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; }
 }
@@ -2057,6 +2113,67 @@ async function doEditTrainer(id) {
   if (!fio) return toast('Введите ФИО','error');
   try { await DB.updateProfile(id,{fio,role,branches:brs}); document.querySelector('.modal-overlay')?.remove(); toast('✅','success'); loadStaffList(); }
   catch(e) { toast('Ошибка','error'); }
+}
+
+async function doArchiveTrainer(id, fioEnc) {
+  const fio = decodeURIComponent(fioEnc);
+  const m = el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>📦 Архивировать</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <p style="margin-bottom:16px;line-height:1.6">
+      <b>${fio}</b> потеряет доступ к приложению.<br>
+      История тренировок сохранится и будет видна координатору.<br>
+      Тренер не сможет войти снова под этим именем.
+    </p>
+    <button class="btn btn-full" style="background:rgba(245,158,11,.15);color:#f59e0b;margin-bottom:8px"
+      onclick="doArchiveConfirm(${id})">📦 Архивировать</button>
+    <button class="btn btn-full" style="background:var(--card)"
+      onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doArchiveConfirm(id) {
+  try {
+    await DB.archiveTrainer(id);
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Тренер архивирован','success');
+    loadStaffList();
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
+async function doDeleteTrainer(id, fioEnc) {
+  const fio = decodeURIComponent(fioEnc);
+  const m = el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>🗑 Удалить профиль</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <p style="margin-bottom:16px;line-height:1.6">
+      <b>${fio}</b><br><br>
+      <b>Если у тренера нет истории</b> — профиль удалится полностью. Тренер сможет создать новый аккаунт.<br><br>
+      <b>Если история есть</b> — нельзя удалить, только архивировать.
+    </p>
+    <button class="btn btn-danger btn-full" style="margin-bottom:8px"
+      onclick="doDeleteConfirm(${id})">🗑 Удалить</button>
+    <button class="btn btn-full" style="background:var(--card)"
+      onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doDeleteConfirm(id) {
+  try {
+    await DB.deleteTrainer(id);
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Профиль удалён','success');
+    loadStaffList();
+  } catch(e) {
+    document.querySelector('.modal-overlay')?.remove();
+    if (e.message === 'has_history') {
+      toast('Есть история тренировок — используйте архивирование','error');
+    } else {
+      toast('Ошибка удаления','error');
+    }
+  }
 }
 
 // ─ ADMIN: ФИЛИАЛЫ
