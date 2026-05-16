@@ -190,7 +190,14 @@
             <thead>
               <tr>
                 <th class="time-col"></th>
-                ${DAYS.map(d=>`<th>${d}</th>`).join('')}
+                ${(() => {
+  const mon = new Date();
+  mon.setDate(mon.getDate() - (mon.getDay()+6)%7);
+  return DAYS_SHORT.map((d,i) => {
+    const dt = new Date(mon); dt.setDate(mon.getDate()+i);
+    return `<th>${d}<br><span style="font-size:11px;font-weight:400;opacity:.6">${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,'0')}</span></th>`;
+  }).join('');
+})()}
               </tr>
             </thead>
             <tbody>
