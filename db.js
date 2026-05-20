@@ -95,6 +95,7 @@ const DB = {
   async getClients(trainerId) {
     const {data,error} = await sb().from('clients').select('*')
       .eq('trainer_id',trainerId)
+      .eq('is_archived',false)
       .order('last_used',{ascending:false,nullsFirst:false});
     if (error) throw error; return data||[];
   },
@@ -162,7 +163,15 @@ const DB = {
     const {error} = await sb().from('workouts').delete().eq('id',id);
     if (error) throw error;
   },
-
+async deleteClient(id) {
+    const {error} = await sb().from('clients').delete().eq('id',id);
+    if (error) throw error;
+  },
+  async archiveClient(id) {
+    const {error} = await sb().from('clients')
+      .update({is_archived:true}).eq('id',id);
+    if (error) throw error;
+  },
   // ─── DUTIES ──────────────────────────────────
   async getActiveDuty(trainerId) {
     const {data,error} = await sb().from('duties').select('*')
