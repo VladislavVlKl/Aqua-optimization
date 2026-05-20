@@ -1807,11 +1807,12 @@ async function renderSeniorApp() {
     <button class="nav-btn" onclick="seniorTab('report')"><span>📊</span>Отчёт</button>
     <button class="nav-btn" onclick="seniorTab('events')"><span>🏆</span>События</button>
     <button class="nav-btn" onclick="seniorTab('branch')"><span>🏢</span>Филиал</button>
+    <button class="nav-btn" onclick="seniorTab('groups')"><span>🏊</span>Группы</button>
   </nav>`);
   seniorTab('home');
 }
 function seniorTab(tab) {
-  const tabs=['home','clients','today','schedule','report','events','branch'];
+  const tabs=['home','clients','today','schedule','report','events','branch','groups'];
   $$('.nav-btn').forEach((b,i)=>b.classList.toggle('active',tabs[i]===tab));
   if (tab==='home')     renderHomeTab();
   if (tab==='clients')  renderClientsTab();
@@ -1820,6 +1821,19 @@ function seniorTab(tab) {
   if (tab==='report')   renderReportTab();
   if (tab==='events')   renderEventsTab();
   if (tab==='branch')   renderBranchReport();
+  if (tab==='groups')   renderSeniorGroups();
+}
+async function renderSeniorGroups() {
+  const branches = STATE.profile.branches||[];
+  $('#tab-content').innerHTML=`<div class="tab-pad">
+    <div class="section-header"><h3>Группы</h3>
+      <button class="btn btn-sm" onclick="renderAddGroupTypeModal()">+ Тип</button></div>
+    <div id="groups-list"><div class="center-screen"><div class="spinner"></div></div></div>
+    <h4 style="margin-top:20px">Назначить группу тренеру</h4>
+    <div id="assign-form"></div>
+  </div>`;
+  await loadGroupsList();
+  await renderAssignGroupForm();
 }
 async function renderBranchReport() {
   const branches=STATE.profile.branches||[];
