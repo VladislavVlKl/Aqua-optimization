@@ -1550,6 +1550,12 @@ async function renderClientProfile(clientId, backTab='home') {
             ${isAdmin?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
               onclick="renderAdminTransferModal('${clientId}','${client.fio}')">
               🔄 Передать (адм.)</button>`:''}
+            ${canEdit?`<button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3)"
+              onclick="doArchiveClient('${clientId}','${encodeURIComponent(client.fio)}')">
+              📦 Архив</button>`:''}
+            ${canEdit?`<button class="btn btn-sm btn-danger"
+              onclick="doDeleteClientCheck('${clientId}','${encodeURIComponent(client.fio)}','${client.created_at||''}')">
+              🗑 Удалить</button>`:''}
           </div>
         </div>
       </div>
