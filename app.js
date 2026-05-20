@@ -2622,12 +2622,27 @@ async function loadGroupsList() {
   const body=document.getElementById('groups-list'); if (!body) return;
   try {
     const types=await DB.getGroupTypes();
-    body.innerHTML=types.map(gt=>`<div class="staff-card">
-      <div class="staff-info">
-        <div class="staff-fio">${gt.name}</div>
-        <div class="staff-meta">${gt.type==='children'?`Детская · ${fmt(gt.price_per_month)} сум/мес · ${gt.trainer_percentage}%`:'Взрослая · по явке'}</div>
-      </div>
-    </div>`).join('')||'<p class="hint">Нет типов</p>';
+    const allAssigned = await Promise.all(types.map(gt=>
+      sb().from('trainer_groups')
+        .select('*, profiles(fio)')
+        .eq('group_type_id',gt.id)
+        .is('subscription_end',null)
+    ));
+    body.innerHTML=types.map((gt,i)=>{
+      const assigned = allAssigned[i]?.data||[];
+      return `<div class="staff-card" style="flex-direction:column;align-items:flex-start;gap:8px">
+        <div>
+          <div class="staff-fio">${gt.name}</div>
+          <div class="staff-meta">${gt.type==='children'?`Детская · ${fmt(gt.price_per_month)} сум/мес · ${gt.trainer_percentage}%`:'Взрослая · по явке'}</div>
+        </div>
+        ${assigned.length?assigned.map(a=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;width:100%;padding:4px 0;border-top:1px solid var(--border)">
+            <span style="font-size:13px">${a.profiles?.fio||'—'} · ${a.branch}</span>
+            <button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444"
+              onclick="doUnassignGroup(${a.id})">Открепить</button>
+          </div>`).join(''):'<p class="hint" style="font-size:12px">Нет тренеров</p>'}
+      </div>`;
+    }).join('')||'<p class="hint">Нет типов</p>';
   } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; }
 }
 function renderAddGroupTypeModal() {
