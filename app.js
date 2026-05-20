@@ -309,8 +309,7 @@ async function renderHomeTab() {
             onclick="doDeleteDuty('${d.id}')">✕</button>
         </div>`).join('')}
       </div>`:''}
-        ${fmt(Math.round(duties.reduce((s,d)=>s+hoursFromDuty(d.start_time,d.end_time),0)*RATES.duty_per_hour))} сум
-      </div>`:''}
+        
     </div>
 
   </div>`;
