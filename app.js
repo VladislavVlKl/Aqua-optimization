@@ -2620,8 +2620,7 @@ async function renderAdminGroups() {
     <div id="assign-form"></div>
   </div>`;
   await loadGroupsList(); await renderAssignGroupForm(); 
-  catch(e) { console.error('renderAssignGroupForm failed:', e); document.getElementById('assign-form').innerHTML='<p class="hint">Ошибка формы: '+e.message+'</p>'; }
-}
+  } catch(e) { if(document.getElementById('assign-form')) document.getElementById('assign-form').innerHTML='<p class="hint">Ошибка</p>'; }}
 async function loadGroupsList() {
   const body=document.getElementById('groups-list'); if (!body) return;
   try {
