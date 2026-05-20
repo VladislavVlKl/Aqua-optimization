@@ -224,7 +224,77 @@ async deleteClient(id) {
       .select('*, group_types(*)').single();
     if (error) throw error; return data;
   },
+async unassignTrainerGroup(id) {
+    const {error} = await sb().from('trainer_groups')
+      .update({subscription_end: todayStr()}).eq('id',id);
+    if (error) throw error;
+  },
 
+  // ─── GROUP CLIENTS ────────────────────────────
+  async getGroupClients(groupId) {
+    const {data,error} = await sb().from('group_clients')
+      .select('*').eq('group_id',groupId).eq('is_active',true).order('name');
+    if (error) throw error; return data||[];
+  },
+  async addGroupClient(groupId, name, age, monthlyPrice, startDate) {
+    const {data,error} = await sb().from('group_clients')
+      .insert({group_id:groupId, name, age:age||null,
+               monthly_price:monthlyPrice||0, start_date:startDate})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async updateGroupClient(id, fields) {
+    const {error} = await sb().from('group_clients').update(fields).eq('id',id);
+    if (error) throw error;
+  },
+  async archiveGroupClient(id) {
+    const {error} = await sb().from('group_clients')
+      .update({is_active:false}).eq('id',id);
+    if (error) throw error;
+  },
+
+  // ─── GROUP ATTENDANCE ─────────────────────────
+  async getGroupAttendance(groupId, date) {
+    const {data,error} = await sb().from('group_attendance')
+      .select('*').eq('group_id',groupId).eq('session_date',date);
+    if (error) throw error; return data||[];
+  },
+  async saveGroupAttendance(groupId, groupClientId, date, attended) {
+    const {error} = await sb().from('group_attendance')
+      .upsert({group_id:groupId, group_client_id:groupClientId,
+               session_date:date, attended},
+              {onConflict:'group_client_id,session_date'});
+    if (error) throw error;
+  },
+
+  // ─── GROUP PAYMENTS ───────────────────────────
+  async getGroupPayments(groupId, month) {
+    const {data,error} = await sb().from('group_payments')
+      .select('*').eq('group_id',groupId).eq('month',month);
+    if (error) throw error; return data||[];
+  },
+  async setGroupPayment(groupId, groupClientId, month, amount, paid) {
+    const {error} = await sb().from('group_payments')
+      .upsert({group_id:groupId, group_client_id:groupClientId,
+               month, amount, paid,
+               paid_at: paid ? new Date().toISOString() : null},
+              {onConflict:'group_client_id,month'});
+    if (error) throw error;
+  },
+
+  // ─── GROUP PROGRESS NOTES ─────────────────────
+  async getGroupProgressNotes(groupId, month) {
+    const {data,error} = await sb().from('group_progress_notes')
+      .select('*').eq('group_id',groupId).eq('month',month);
+    if (error) throw error; return data||[];
+  },
+  async saveGroupProgressNote(groupId, groupClientId, trainerId, month, note) {
+    const {error} = await sb().from('group_progress_notes')
+      .upsert({group_id:groupId, group_client_id:groupClientId,
+               trainer_id:trainerId, month, note},
+              {onConflict:'group_client_id,month'});
+    if (error) throw error;
+  },
   // ─── GROUP SESSIONS ──────────────────────────
   async logGroupSession(trainerId, groupTypeId, branch, date, headcount) {
     const {data,error} = await sb().from('group_sessions')
