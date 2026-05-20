@@ -300,8 +300,15 @@ async function renderHomeTab() {
       ${branchSelect('duty-branch',branches)}
       <button class="btn btn-full" style="background:var(--card);border:1px solid var(--border)"
         onclick="doLogDutyHome()">Записать дежурство</button>
-      ${duties.length?`<div class="hint" style="margin-top:10px">
-        За этот месяц: ${duties.length} дежурств ·
+      ${duties.length?`<div style="margin-top:10px">
+        <div class="hint" style="margin-bottom:6px">За этот месяц: ${duties.length} дежурств ·
+        ${fmt(Math.round(duties.reduce((s,d)=>s+hoursFromDuty(d.start_time,d.end_time),0)*RATES.duty_per_hour))} сум</div>
+        ${duties.map(d=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <span>${new Date(d.start_time).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'})} · ${hoursFromDuty(d.start_time,d.end_time).toFixed(1)}ч</span>
+          <button class="btn btn-sm btn-danger" style="padding:2px 8px;font-size:11px"
+            onclick="doDeleteDuty('${d.id}')">✕</button>
+        </div>`).join('')}
+      </div>`:''}
         ${fmt(Math.round(duties.reduce((s,d)=>s+hoursFromDuty(d.start_time,d.end_time),0)*RATES.duty_per_hour))} сум
       </div>`:''}
     </div>
