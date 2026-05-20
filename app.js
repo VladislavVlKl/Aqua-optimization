@@ -2733,9 +2733,11 @@ async function doAssignGroup() {
   const start       = document.getElementById('ag-start')?.value||todayStr();
   const rateType    = document.getElementById('ag-rate-type')?.value||'percent';
   const rateValue   = parseFloat(document.getElementById('ag-rate-value')?.value)||40;
+  const role        = document.getElementById('ag-role')?.value||null;
   if (!trainerId||!groupTypeId||!branch) return toast('Заполните все поля','error');
+  if (!trainerId || trainerId===0) return toast('Выберите тренера','error');
   try {
-    await DB.addTrainerGroup(trainerId,groupTypeId,branch,start,rateType,rateValue);
+    await DB.addTrainerGroup(trainerId,groupTypeId,branch,start,rateType,rateValue,role);
     toast('✅ Назначено','success');
     await loadGroupsList();
   } catch(e) { toast('Ошибка','error'); console.error(e); }
