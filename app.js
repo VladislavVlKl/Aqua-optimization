@@ -97,7 +97,7 @@ function renderRegister() {
   setupBack(null);
   setScreen(`<div class="screen-pad">
     <div class="logo">🏋️</div><h1>Первый вход</h1>
-    <p class="hint">Введите ФИО точно так же, как внёс координатор.</p>
+    <p class="hint" style="color:#ef4444;font-weight:600">⚠️ Только Фамилия и Имя — без отчества!</p><p class="hint">Пример: Иванов Иван</p>
     <div class="form-group"><label>ФИО</label>
       <input id="reg-fio" type="text" autocomplete="name" placeholder="Иванов Иван Иванович"></div>
     <div class="form-group"><label>PIN-код (4 цифры)</label>
