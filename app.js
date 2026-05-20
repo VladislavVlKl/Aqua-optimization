@@ -409,12 +409,27 @@ function renderDateFields() {
   const notesW=$('#wk-notes-wrap');
   if (notesW) notesW.style.display=count>1?'':'none';
   const div=$('#wk-dates'); if (!div) return;
+  const now=new Date();
+  const maxDate=now.toISOString().slice(0,10);
+  const minDate=new Date(Date.now()-MAX_BACKDATE_HOURS*3600000).toISOString().slice(0,10);
+  const times=[];
+  for(let h=7;h<=22;h++){
+    times.push(`<option value="${String(h).padStart(2,'0')}:00">${String(h).padStart(2,'0')}:00</option>`);
+    times.push(`<option value="${String(h).padStart(2,'0')}:30">${String(h).padStart(2,'0')}:30</option>`);
+  }
+  const curH=String(now.getHours()).padStart(2,'0');
+  const curM=now.getMinutes()<30?'00':'30';
+  const curTime=`${curH}:${curM}`;
   div.innerHTML=Array.from({length:count},(_,i)=>`
     <div class="form-group">
       <label>${count>1?`ПТ №${i+1} — `:''}Дата и время</label>
-      <input type="datetime-local" id="wk-date-${i}" value="${localDT(-i)}"
-        min="${new Date(Date.now()-MAX_BACKDATE_HOURS*3600000).toISOString().slice(0,16)}"
-        max="${new Date().toISOString().slice(0,16)}">
+      <div style="display:flex;gap:8px">
+        <input type="date" id="wk-date-${i}" value="${maxDate}"
+          min="${minDate}" max="${maxDate}" style="flex:1">
+        <select id="wk-time-${i}" style="flex:1">
+          ${times.map(t=>t.replace(`value="${curTime}"`,`value="${curTime}" selected`)).join('')}
+        </select>
+      </div>
     </div>`).join('');
 }
 function toggleSubstitute(cb) {
