@@ -2829,7 +2829,8 @@ let _techBranch = '';
 let _techSection = 'equipment';
 
 async function renderAdminTech() {
-  const branches = STATE.profile.branches||[];
+  const allBranches = await DB.getBranches();
+  const branches = allBranches.map(b=>b.name);
   if (!_techBranch) _techBranch = branches[0]||'';
   $('#tab-content').innerHTML=`<div class="tab-pad">
     <div class="section-header"><h3>🔧 Техника</h3></div>
