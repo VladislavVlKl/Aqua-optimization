@@ -987,8 +987,7 @@ function calcSalary({workouts=[], duties=[], trainerGroups=[], groupSessions=[],
   const total   = ptSum+dropInSum+dutySum+childSum+adultSum+bonus-penalty;
   return {cat,hours,ptSum,dropInSum,dutySum,childSum,adultSum,bonus,penalty,total};
   },
-
-// ─── ТЕХНИЧКА ────────────────────────────────
+  // ─── ТЕХНИЧКА ────────────────────────────────
   async getTechEquipment(branch) {
     const {data,error} = await sb().from('tech_equipment')
       .select('*').eq('branch',branch).order('category').order('name');
