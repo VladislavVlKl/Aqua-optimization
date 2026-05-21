@@ -1979,6 +1979,7 @@ function adminTab(tab) {
   if (tab==='notifications') renderAdminNotifications();
   if (tab==='events')        renderEventsTab();
   if (tab==='control')       renderAdminControl();
+  if (tab==='tech')          renderAdminTech();
 }
 
 // ─ ADMIN: АНАЛИТИКА ──────────────────────────
