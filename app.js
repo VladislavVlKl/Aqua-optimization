@@ -595,41 +595,6 @@ function setClientMode(mode) {
 
 function selectCat(btn) { $$('.cat-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }
 
-async function doAddClient() {
-  const fio       = $('#nc-fio')?.value.trim();
-  const age       = parseInt($('#nc-age')?.value)||null;
-  const cat       = parseInt(document.querySelector('.cat-btn.active[data-cat]')?.dataset.cat||'1');
-  const modeBtn   = document.getElementById('mode-new');
-  const isExisting = document.getElementById('mode-existing')?.classList.contains('active');
-
-  if (!fio) return toast('Введите ФИО','error');
-
-  try {
-    if (!isExisting) {
-      // Новый клиент
-      const bal = parseInt($('#nc-balance')?.value||'0');
-      const client = await DB.addClient(fio, cat, STATE.profile.id, age, todayStr(), null);
-      if (bal > 0) {
-        await DB.addBalance(client.id, bal);
-        await DB.createSubscription(client.id, STATE.profile.id, todayStr(), bal);
-      }
-    } else {
-      // Действующий клиент
-      const startDate = $('#nc-start')?.value || todayStr();
-      const initial   = parseInt($('#nc-remaining')?.value||'0'); // для initial_balance используем remaining
-      const remaining = parseInt($('#nc-remaining')?.value||'0');
-      const initOrig  = parseInt($('#nc-initial')?.value||remaining);
-
-      const client = await DB.addClient(fio, cat, STATE.profile.id, age, startDate, null);
-      // Устанавливаем баланс как остаток
-      if (remaining > 0) await DB.addBalance(client.id, remaining);
-      // Создаём абонемент с правильным initial_balance (изначальный пакет)
-      await DB.createSubscriptionWithInitial(client.id, STATE.profile.id, startDate, initOrig, remaining);
-    }
-
-    document.querySelector('.modal-overlay')?.remove();
-    toast('Клиент добавлен ✅','success');
-    renderClientsTab();
   let _addingClient = false;
 async function doAddClient() {
   if (_addingClient) return;
