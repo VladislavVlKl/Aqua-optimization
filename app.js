@@ -629,7 +629,60 @@ async function doAddClient() {
     document.querySelector('.modal-overlay')?.remove();
     toast('Клиент добавлен ✅','success');
     renderClientsTab();
-  } catch(e) { toast('Ошибка','error'); console.error(e); }
+  let _addingClient = false;
+async function doAddClient() {
+  if (_addingClient) return;
+  _addingClient = true;
+  const btn = document.querySelector('.modal .btn-primary');
+  if (btn) { btn.disabled=true; btn.textContent='Добавляем...'; }
+
+  const fio       = $('#nc-fio')?.value.trim();
+  const age       = parseInt($('#nc-age')?.value)||null;
+  const cat       = parseInt(document.querySelector('.cat-btn.active[data-cat]')?.dataset.cat||'1');
+  const isExisting = document.getElementById('mode-existing')?.classList.contains('active');
+
+  if (!fio) {
+    _addingClient=false;
+    if (btn) { btn.disabled=false; btn.textContent='Добавить'; }
+    return toast('Введите ФИО','error');
+  }
+
+  // Проверка дубля
+  try {
+    const existing = await DB.getClients(STATE.profile.id);
+    if (existing.find(c=>c.fio.toLowerCase()===fio.toLowerCase())) {
+      _addingClient=false;
+      if (btn) { btn.disabled=false; btn.textContent='Добавить'; }
+      return toast(`«${fio}» уже есть в вашем списке`,'error');
+    }
+  } catch(e) { console.error(e); }
+
+  try {
+    if (!isExisting) {
+      const bal = parseInt($('#nc-balance')?.value||'0');
+      const client = await DB.addClient(fio, cat, STATE.profile.id, age, todayStr(), null);
+      if (bal > 0) {
+        await DB.addBalance(client.id, bal);
+        await DB.createSubscription(client.id, STATE.profile.id, todayStr(), bal);
+      }
+    } else {
+      const startDate = $('#nc-start')?.value || todayStr();
+      const remaining = parseInt($('#nc-remaining')?.value||'0');
+      const initOrig  = parseInt($('#nc-initial')?.value||remaining);
+      const client = await DB.addClient(fio, cat, STATE.profile.id, age, startDate, null);
+      if (remaining > 0) await DB.addBalance(client.id, remaining);
+      await DB.createSubscriptionWithInitial(client.id, STATE.profile.id, startDate, initOrig, remaining);
+    }
+    _addingClient=false;
+    document.querySelector('.modal-overlay')?.remove();
+    toast('Клиент добавлен ✅','success');
+    renderClientsTab();
+  } catch(e) {
+    _addingClient=false;
+    if (btn) { btn.disabled=false; btn.textContent='Добавить'; }
+    toast('Ошибка при добавлении','error');
+    console.error(e);
+  }
 }
 
 // ── ТАБ: РАСПИСАНИЕ ───────────────────────────
