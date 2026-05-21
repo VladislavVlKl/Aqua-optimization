@@ -2619,8 +2619,9 @@ async function renderAdminGroups() {
     <h4 style="margin-top:20px">Назначить группу тренеру</h4>
     <div id="assign-form"></div>
   </div>`;
-  await loadGroupsList(); await renderAssignGroupForm(); 
-  catch(e) { }
+  await loadGroupsList();
+  await renderAssignGroupForm();
+}
 async function loadGroupsList() {
   const body=document.getElementById('groups-list'); if (!body) return;
   try {
