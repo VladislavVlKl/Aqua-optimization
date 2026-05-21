@@ -2814,7 +2814,319 @@ async function renderAdminControl() {
     </div>`;
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
+// ─── ТЕХНИЧКА ────────────────────────────────────────────────────────────────
 
+const TECH_SECTIONS = ['equipment','issues','shopping','bills'];
+const TECH_LABELS   = {equipment:'Оборудование', issues:'Поломки', shopping:'Закупки', bills:'Счета'};
+const TECH_ICONS    = {equipment:'🔩', issues:'🔴', shopping:'🛒', bills:'💳'};
+const EQUIP_CATS    = ['Насосы','Фильтры','Нагреватели','Дорожки','Инвентарь','Электрика','Прочее'];
+const EQUIP_STATUS  = {ok:'✅ Исправно', broken:'🔴 Сломано', maintenance:'🟡 Обслуживание'};
+const PRIORITY_LBL  = {urgent:'🔴 Срочно', normal:'🟡 Обычный', low:'⚪ Низкий'};
+const ISSUE_STATUS  = {open:'Открыта', in_progress:'В работе', resolved:'Решена'};
+const BILL_CATS     = ['Химия','Электричество','Вода','Ремонт','Инвентарь','Прочее'];
+
+let _techBranch = '';
+let _techSection = 'equipment';
+
+async function renderAdminTech() {
+  const branches = STATE.profile.branches||[];
+  if (!_techBranch) _techBranch = branches[0]||'';
+  $('#tab-content').innerHTML=`<div class="tab-pad">
+    <div class="section-header"><h3>🔧 Техника</h3></div>
+    ${branches.length>1?`<div class="form-group">
+      <select id="tech-branch" onchange="_techBranch=this.value;loadTechSection()">
+        ${branches.map(b=>`<option ${b===_techBranch?'selected':''}>${b}</option>`).join('')}
+      </select></div>`:''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+      ${TECH_SECTIONS.map(s=>`<button class="btn btn-sm ${s===_techSection?'btn-primary':''}"
+        onclick="_techSection='${s}';renderAdminTech()">
+        ${TECH_ICONS[s]} ${TECH_LABELS[s]}</button>`).join('')}
+    </div>
+    <div id="tech-body"><div class="center-screen"><div class="spinner"></div></div></div>
+  </div>`;
+  await loadTechSection();
+}
+
+async function loadTechSection() {
+  const body = document.getElementById('tech-body'); if (!body) return;
+  const branch = document.getElementById('tech-branch')?.value || _techBranch;
+  _techBranch = branch;
+  try {
+    if (_techSection==='equipment') await renderTechEquipment(body, branch);
+    if (_techSection==='issues')    await renderTechIssues(body, branch);
+    if (_techSection==='shopping')  await renderTechShopping(body, branch);
+    if (_techSection==='bills')     await renderTechBills(body, branch);
+  } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
+}
+
+// ── ОБОРУДОВАНИЕ ─────────────────────────────
+async function renderTechEquipment(body, branch) {
+  const items = await DB.getTechEquipment(branch);
+  const bycat = {};
+  EQUIP_CATS.forEach(c=>bycat[c]=[]);
+  items.forEach(i=>{ if(bycat[i.category]) bycat[i.category].push(i); else bycat['Прочее'].push(i); });
+  body.innerHTML=`
+    <button class="btn btn-sm btn-primary" style="margin-bottom:12px;width:100%"
+      onclick="renderAddEquipmentModal('${branch}')">+ Добавить оборудование</button>
+    ${EQUIP_CATS.map(cat=>!bycat[cat]?.length?'':
+      `<div style="margin-bottom:12px">
+        <div style="font-weight:600;font-size:12px;color:var(--hint);margin-bottom:6px">${cat}</div>
+        ${bycat[cat].map(eq=>`<div class="staff-card" style="flex-direction:column;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div class="staff-fio">${eq.name}</div>
+              <div class="staff-meta">${EQUIP_STATUS[eq.status]||eq.status}
+                ${eq.next_service?` · ТО: ${eq.next_service}`:''}</div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <select style="font-size:11px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:3px"
+                onchange="updateEquipStatus('${eq.id}',this.value)">
+                ${Object.entries(EQUIP_STATUS).map(([v,l])=>`<option value="${v}" ${eq.status===v?'selected':''}>${l}</option>`).join('')}
+              </select>
+              <button class="btn btn-sm btn-danger" onclick="deleteTechItem('equipment','${eq.id}')">🗑</button>
+            </div>
+          </div>
+          ${eq.notes?`<div style="font-size:11px;color:var(--hint)">${eq.notes}</div>`:''}
+        </div>`).join('')}
+      </div>`).join('')}
+    ${!items.length?'<p class="hint">Нет оборудования</p>':''}`;
+}
+
+function renderAddEquipmentModal(branch) {
+  const m=el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>Добавить оборудование</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <div class="form-group"><label>Название</label>
+      <input id="eq-name" type="text" placeholder="Насос циркуляционный"></div>
+    <div class="form-group"><label>Категория</label>
+      <select id="eq-cat">${EQUIP_CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+    <div class="form-group"><label>Статус</label>
+      <select id="eq-status">
+        ${Object.entries(EQUIP_STATUS).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+      </select></div>
+    <div class="form-group"><label>Следующее ТО</label>
+      <input id="eq-service" type="date"></div>
+    <div class="form-group"><label>Заметка</label>
+      <input id="eq-notes" type="text" placeholder="Необязательно"></div>
+    <button class="btn btn-primary btn-full" onclick="doAddEquipment('${branch}')">Добавить</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doAddEquipment(branch) {
+  const name = document.getElementById('eq-name')?.value.trim();
+  if (!name) return toast('Введите название','error');
+  await DB.addTechEquipment({
+    branch, name,
+    category:    document.getElementById('eq-cat')?.value,
+    status:      document.getElementById('eq-status')?.value||'ok',
+    next_service:document.getElementById('eq-service')?.value||null,
+    notes:       document.getElementById('eq-notes')?.value.trim()||null,
+  });
+  document.querySelector('.modal-overlay')?.remove();
+  toast('Добавлено','success'); loadTechSection();
+}
+async function updateEquipStatus(id, status) {
+  await DB.updateTechEquipment(id,{status}); toast('Обновлено','success');
+}
+
+// ── ПОЛОМКИ ──────────────────────────────────
+async function renderTechIssues(body, branch) {
+  const [issues, equip] = await Promise.all([DB.getTechIssues(branch), DB.getTechEquipment(branch)]);
+  body.innerHTML=`
+    <button class="btn btn-sm btn-primary" style="margin-bottom:12px;width:100%"
+      onclick="renderAddIssueModal('${branch}',${JSON.stringify(equip.map(e=>({id:e.id,name:e.name}))).replace(/"/g,"'")})">
+      + Добавить поломку</button>
+    ${!issues.length?'<p class="hint">Поломок нет 🎉</p>':issues.map(iss=>`
+      <div class="staff-card" style="flex-direction:column;gap:6px">
+        <div style="display:flex;justify-content:space-between">
+          <div>
+            <div class="staff-fio">${iss.description}</div>
+            <div class="staff-meta">${PRIORITY_LBL[iss.priority]||iss.priority}
+              ${iss.tech_equipment?.name?' · '+iss.tech_equipment.name:''}</div>
+          </div>
+          <select style="font-size:11px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:3px"
+            onchange="updateIssueStatus('${iss.id}',this.value)">
+            ${Object.entries(ISSUE_STATUS).map(([v,l])=>`<option value="${v}" ${iss.status===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+        </div>
+      </div>`).join('')}`;
+}
+function renderAddIssueModal(branch, equip) {
+  const m=el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>Добавить поломку</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <div class="form-group"><label>Описание</label>
+      <input id="iss-desc" type="text" placeholder="Что сломалось"></div>
+    <div class="form-group"><label>Оборудование</label>
+      <select id="iss-eq">
+        <option value="">— не привязывать —</option>
+        ${equip.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}
+      </select></div>
+    <div class="form-group"><label>Приоритет</label>
+      <select id="iss-pri">
+        ${Object.entries(PRIORITY_LBL).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+      </select></div>
+    <button class="btn btn-primary btn-full" onclick="doAddIssue('${branch}')">Добавить</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doAddIssue(branch) {
+  const desc = document.getElementById('iss-desc')?.value.trim();
+  if (!desc) return toast('Введите описание','error');
+  await DB.addTechIssue({
+    branch, description:desc,
+    equipment_id: document.getElementById('iss-eq')?.value||null,
+    priority:     document.getElementById('iss-pri')?.value||'normal',
+    status:'open',
+  });
+  document.querySelector('.modal-overlay')?.remove();
+  toast('Добавлено','success'); loadTechSection();
+}
+async function updateIssueStatus(id, status) {
+  const fields = {status};
+  if (status==='resolved') fields.resolved_at = new Date().toISOString();
+  await DB.updateTechIssue(id, fields); toast('Обновлено','success'); loadTechSection();
+}
+
+// ── ЗАКУПКИ ──────────────────────────────────
+async function renderTechShopping(body, branch) {
+  const items = await DB.getTechShopping(branch);
+  const STATUS = {pending:'⏳ Ожидает', ordered:'📦 Заказано', received:'✅ Получено'};
+  body.innerHTML=`
+    <button class="btn btn-sm btn-primary" style="margin-bottom:12px;width:100%"
+      onclick="renderAddShoppingModal('${branch}')">+ Добавить</button>
+    ${!items.length?'<p class="hint">Список пуст</p>':items.map(it=>`
+      <div class="staff-card" style="flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="staff-fio">${it.name}</div>
+            <div class="staff-meta">${PRIORITY_LBL[it.priority]}
+              ${it.quantity?' · '+it.quantity:''}
+              ${it.price?` · ${fmt(it.price)} сум`:''}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select style="font-size:11px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:3px"
+              onchange="updateShoppingStatus('${it.id}',this.value)">
+              ${Object.entries(STATUS).map(([v,l])=>`<option value="${v}" ${it.status===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+            <button class="btn btn-sm btn-danger" onclick="deleteTechItem('shopping','${it.id}')">🗑</button>
+          </div>
+        </div>
+      </div>`).join('')}`;
+}
+function renderAddShoppingModal(branch) {
+  const m=el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>Добавить в закупки</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <div class="form-group"><label>Название</label>
+      <input id="sh-name" type="text" placeholder="Хлор 50 кг"></div>
+    <div class="form-group"><label>Количество</label>
+      <input id="sh-qty" type="text" placeholder="2 мешка"></div>
+    <div class="form-group"><label>Примерная стоимость (сум)</label>
+      <input id="sh-price" type="number" placeholder="0"></div>
+    <div class="form-group"><label>Приоритет</label>
+      <select id="sh-pri">
+        ${Object.entries(PRIORITY_LBL).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+      </select></div>
+    <button class="btn btn-primary btn-full" onclick="doAddShopping('${branch}')">Добавить</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doAddShopping(branch) {
+  const name = document.getElementById('sh-name')?.value.trim();
+  if (!name) return toast('Введите название','error');
+  await DB.addTechShopping({
+    branch, name,
+    quantity: document.getElementById('sh-qty')?.value.trim()||null,
+    price:    parseFloat(document.getElementById('sh-price')?.value)||0,
+    priority: document.getElementById('sh-pri')?.value||'normal',
+  });
+  document.querySelector('.modal-overlay')?.remove();
+  toast('Добавлено','success'); loadTechSection();
+}
+async function updateShoppingStatus(id, status) {
+  await DB.updateTechShopping(id,{status}); toast('Обновлено','success'); loadTechSection();
+}
+
+// ── СЧЕТА ─────────────────────────────────────
+async function renderTechBills(body, branch) {
+  const bills = await DB.getTechBills(branch);
+  const unpaidTotal = bills.filter(b=>!b.paid).reduce((s,b)=>s+b.amount,0);
+  body.innerHTML=`
+    <button class="btn btn-sm btn-primary" style="margin-bottom:8px;width:100%"
+      onclick="renderAddBillModal('${branch}')">+ Добавить счёт</button>
+    ${unpaidTotal>0?`<div class="warn-banner" style="margin-bottom:12px">
+      💳 Неоплачено: ${fmt(Math.round(unpaidTotal))} сум</div>`:''}
+    ${!bills.length?'<p class="hint">Счетов нет</p>':bills.map(b=>`
+      <div class="staff-card" style="flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="staff-fio">${b.category}${b.description?' — '+b.description:''}</div>
+            <div class="staff-meta">${fmt(b.amount)} сум · ${b.bill_date}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:11px;padding:3px 8px;border-radius:12px;
+              background:${b.paid?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)'};
+              color:${b.paid?'#10b981':'#ef4444'}">
+              ${b.paid?'Оплачен':'Не оплачен'}</span>
+            <button class="btn btn-sm" onclick="toggleBillPaid('${b.id}',${b.paid})">
+              ${b.paid?'↩':'✓'}</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteTechItem('bills','${b.id}')">🗑</button>
+          </div>
+        </div>
+      </div>`).join('')}`;
+}
+function renderAddBillModal(branch) {
+  const m=el('div','modal-overlay');
+  m.innerHTML=`<div class="modal">
+    <div class="modal-header"><h3>Добавить счёт</h3>
+      <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+    <div class="form-group"><label>Категория</label>
+      <select id="bill-cat">${BILL_CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+    <div class="form-group"><label>Описание</label>
+      <input id="bill-desc" type="text" placeholder="Необязательно"></div>
+    <div class="form-group"><label>Сумма (сум)</label>
+      <input id="bill-amount" type="number" placeholder="0"></div>
+    <div class="form-group"><label>Дата</label>
+      <input id="bill-date" type="date" value="${todayStr()}"></div>
+    <button class="btn btn-primary btn-full" onclick="doAddBill('${branch}')">Добавить</button>
+  </div>`;
+  document.body.appendChild(m);
+}
+async function doAddBill(branch) {
+  const amount = parseFloat(document.getElementById('bill-amount')?.value)||0;
+  if (!amount) return toast('Введите сумму','error');
+  await DB.addTechBill({
+    branch,
+    category:    document.getElementById('bill-cat')?.value,
+    description: document.getElementById('bill-desc')?.value.trim()||null,
+    amount,
+    bill_date:   document.getElementById('bill-date')?.value||todayStr(),
+  });
+  document.querySelector('.modal-overlay')?.remove();
+  toast('Добавлено','success'); loadTechSection();
+}
+async function toggleBillPaid(id, currentPaid) {
+  await DB.updateTechBill(id,{
+    paid: !currentPaid,
+    paid_at: !currentPaid ? new Date().toISOString() : null
+  });
+  toast('Обновлено','success'); loadTechSection();
+}
+
+// ── ОБЩЕЕ УДАЛЕНИЕ ────────────────────────────
+async function deleteTechItem(type, id) {
+  if (!confirm('Удалить?')) return;
+  try {
+    if (type==='equipment') await DB.deleteTechEquipment(id);
+    if (type==='shopping')  await DB.updateTechShopping(id,{status:'received'});
+    if (type==='bills')     await DB.updateTechBill(id,{paid:true});
+    toast('Удалено','success'); loadTechSection();
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
 window.addEventListener('DOMContentLoaded', init);
 async function doDeleteDuty(id) {
   if (!confirm('Удалить это дежурство?')) return;
