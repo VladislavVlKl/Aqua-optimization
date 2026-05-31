@@ -989,9 +989,16 @@ function calcSalary({workouts=[], duties=[], trainerGroups=[], groupSessions=[],
   const dropInSum = cat.dropIn*RATES.drop_in_trainer;
   const hours     = duties.reduce((s,d)=>s+(new Date(d.end_time)-new Date(d.start_time))/3600000,0);
   const dutySum   = Math.round(hours*RATES.duty_per_hour);
-  const childSum  = trainerGroups
+  // childSum: только если в этом месяце есть хотя бы одна сессия по этой группе
+  const childSum = trainerGroups
     .filter(tg=>tg.group_types?.type==='children')
-    .reduce((s,tg)=>s+Math.round((tg.group_types.price_per_month||0)*RATES.group_children_pct),0);
+    .reduce((s,tg)=>{
+      const hasSessions = groupSessions.some(gs=>
+        gs.group_type_id===tg.group_type_id || gs.group_types?.name===tg.group_types?.name
+      );
+      if (!hasSessions) return s;
+      return s + Math.round((tg.group_types.price_per_month||0)*RATES.group_children_pct);
+    },0);
   const adultSum  = groupSessions
     .filter(gs=>gs.group_types?.billing_model==='headcount')
     .reduce((s,gs)=>s+getAdultGroupRate(gs.headcount),0);
