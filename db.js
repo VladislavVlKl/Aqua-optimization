@@ -1054,4 +1054,97 @@ Object.assign(DB, {
     const {error} = await sb().from('tech_bills').update(fields).eq('id',id);
     if (error) throw error;
   },
+  // ─── ЦВЕТА КЛИЕНТОВ ──────────────────────────
+  async updateClientColor(clientId, color) {
+    const {error} = await sb().from('clients')
+      .update({color: color || null}).eq('id', clientId);
+    if (error) throw error;
+  },
+
+  // ─── УВЕДОМЛЕНИЯ ВНУТРИ ПРИЛОЖЕНИЯ ───────────
+  async getMyNotifications(tgId) {
+    const {data,error} = await sb().from('notifications_queue')
+      .select('*').eq('recipient_tg_id', tgId)
+      .order('created_at',{ascending:false}).limit(30);
+    if (error) throw error; return data||[];
+  },
+  async markNotificationsRead(tgId) {
+    const {error} = await sb().from('notifications_queue')
+      .update({read_at: new Date().toISOString()})
+      .eq('recipient_tg_id', tgId).is('read_at', null);
+    if (error) throw error;
+  },
+
+  // ─── ЗАПРОСЫ НА УДАЛЕНИЕ КЛИЕНТА ─────────────
+  async createDeleteRequest(clientId, clientName, requestedBy, branch) {
+    const {data,error} = await sb().from('delete_requests')
+      .insert({client_id:clientId, client_name:clientName,
+               requested_by:requestedBy, branch, status:'pending'})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async getDeleteRequests(branch) {
+    const {data,error} = await sb().from('delete_requests')
+      .select('*, profiles!requested_by(fio)')
+      .eq('status','pending')
+      .eq('branch', branch)
+      .order('created_at',{ascending:false});
+    if (error) throw error; return data||[];
+  },
+  async getAllDeleteRequests() {
+    const {data,error} = await sb().from('delete_requests')
+      .select('*, profiles!requested_by(fio)')
+      .eq('status','pending')
+      .order('created_at',{ascending:false});
+    if (error) throw error; return data||[];
+  },
+  async approveDeleteRequest(requestId, clientId) {
+    await sb().from('delete_requests').update({status:'approved'}).eq('id',requestId);
+    const {error} = await sb().from('clients').delete().eq('id',clientId);
+    if (error) throw error;
+  },
+  async rejectDeleteRequest(requestId) {
+    const {error} = await sb().from('delete_requests')
+      .update({status:'rejected'}).eq('id',requestId);
+    if (error) throw error;
+  },
+
+  // ─── ВЗРОСЛЫЕ ГРУППЫ — КЛИЕНТЫ ───────────────
+  async getAdultGroupClients(groupId) {
+    const {data,error} = await sb().from('adult_group_clients')
+      .select('*').eq('group_id',groupId).eq('is_active',true).order('name');
+    if (error) throw error; return data||[];
+  },
+  async addAdultGroupClient(groupId, name) {
+    const {data,error} = await sb().from('adult_group_clients')
+      .insert({group_id:groupId, name}).select().single();
+    if (error) throw error; return data;
+  },
+  async archiveAdultGroupClient(id) {
+    const {error} = await sb().from('adult_group_clients')
+      .update({is_active:false}).eq('id',id);
+    if (error) throw error;
+  },
+
+  // ─── ЗАМЕНА В ГРУППАХ ────────────────────────
+  async createGroupSubstitution(groupId, originalTrainerId, substituteTrainerId, sessionDate) {
+    const {data,error} = await sb().from('group_substitutions')
+      .insert({group_id:groupId, original_trainer_id:originalTrainerId,
+               substitute_trainer_id:substituteTrainerId,
+               session_date:sessionDate, status:'pending'})
+      .select().single();
+    if (error) throw error; return data;
+  },
+  async getPendingSubstitutions(branch) {
+    const {data,error} = await sb().from('group_substitutions')
+      .select('*, original:profiles!original_trainer_id(fio), substitute:profiles!substitute_trainer_id(fio), trainer_groups(*, group_types(name))')
+      .eq('status','pending')
+      .order('created_at',{ascending:false});
+    if (error) throw error; return data||[];
+  },
+  async approveSubstitution(id, rate) {
+    const {error} = await sb().from('group_substitutions')
+      .update({status:'approved', rate}).eq('id',id);
+    if (error) throw error;
+  },
 });
