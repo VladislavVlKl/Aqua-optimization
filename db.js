@@ -1054,6 +1054,16 @@ Object.assign(DB, {
     const {error} = await sb().from('tech_bills').update(fields).eq('id',id);
     if (error) throw error;
   },
+  async getDutiesForSchedule(branch, from, to) {
+    const {data,error} = await sb().from('duties')
+      .select('*, profiles(fio)')
+      .eq('branch',branch)
+      .gte('start_time',from)
+      .lt('start_time',to)
+      .not('end_time','is',null)
+      .order('start_time',{ascending:true});
+    if (error) throw error; return data||[];
+  },
   // ─── ЦВЕТА КЛИЕНТОВ ──────────────────────────
   async updateClientColor(clientId, color) {
     const {error} = await sb().from('clients')
