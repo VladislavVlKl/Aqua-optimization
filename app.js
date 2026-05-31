@@ -888,8 +888,11 @@ async function renderAddSlotModal() {
       </select>
     </div>
 
-    <div id="slot-recurring-dow" class="form-group"><label>День недели</label>
-      <select id="slot-dow">${DAYS_FULL.map((d,i)=>`<option value="${i}">${d}</option>`).join('')}</select></div>
+    <div id="slot-recurring-dow" class="form-group"><label>Дни недели (можно выбрать несколько)</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="slot-dow-checkboxes">
+        ${DAYS_FULL.map((d,i)=>`<label style="display:flex;align-items:center;gap:4px;font-size:13px;padding:6px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;cursor:pointer">
+          <input type="checkbox" name="slot-dow" value="${i}" ${i===0?'checked':''}> ${d}</label>`).join('')}
+      </div></div>
     <div id="slot-onetime-date" class="form-group" style="display:none"><label>Дата</label>
       <select id="slot-date">${weekDates}</select></div>
 
@@ -938,7 +941,9 @@ function onSlotTypeChange(sel) {
 async function doAddSlot() {
   const branch    = document.getElementById('slot-branch')?.value||STATE.profile.branches?.[0]||'';
   const recur     = document.getElementById('slot-recur')?.value||'recurring';
-  const dow       = parseInt(document.getElementById('slot-dow')?.value||'0');
+  const checkedDows = recur==='onetime' ? [] :
+    [...document.querySelectorAll('input[name="slot-dow"]:checked')].map(el=>parseInt(el.value));
+  const dow       = checkedDows.length ? checkedDows[0] : 0;
   const date      = document.getElementById('slot-date')?.value||null;
   const start     = document.getElementById('slot-start')?.value;
   const end       = document.getElementById('slot-end')?.value;
@@ -951,12 +956,9 @@ async function doAddSlot() {
   if (type==='pt'&&!clientId)  return toast('Выберите клиента','error');
   if (type==='group'&&!groupId)return toast('Выберите группу','error');
 
-  const fields = {
+  const baseFields = {
     trainer_id:    STATE.profile.id,
     branch,
-    day_of_week:   recur==='onetime'
-      ? (date ? (new Date(date+'T12:00:00').getDay()+6)%7 : dow)
-      : dow,
     start_time:    start,
     end_time:      end,
     slot_type:     type,
@@ -967,7 +969,15 @@ async function doAddSlot() {
   };
 
   try {
-    await DB.addSlot(fields);
+    if (recur==='onetime') {
+      await DB.addSlot({...baseFields,
+        day_of_week: date ? (new Date(date+'T12:00:00').getDay()+6)%7 : dow});
+    } else {
+      const days = checkedDows && checkedDows.length ? checkedDows : [dow];
+      for (const d of days) {
+        await DB.addSlot({...baseFields, day_of_week: d});
+      }
+    }
     document.querySelector('.modal-overlay')?.remove();
     toast('Слот добавлен ✅','success');
     loadScheduleWeek(_schedWeekOffset);
@@ -1336,7 +1346,7 @@ async function loadTrainerReport(year,month) {
               <button class="btn btn-sm btn-primary" onclick="doConfirmDebt('${w.id}','${w.client_id}')">Подтвердить оплату</button>`:''}
             ${STATE.profile.role==='admin'?`
               <button class="btn btn-sm btn-danger" onclick="doAdminDeleteWorkout('${w.id}')">Удалить</button>`:
-              (canEdit(w.created_at)&&!w.is_debt?`
+              (!w.is_debt&&(!w.session_notes?.accomplishments||canEdit(w.created_at))?`
               <button class="btn btn-sm btn-danger" onclick="doDeleteWorkout('${w.id}')">Удалить</button>`:'')}
             <button class="btn btn-sm" onclick="renderClientProfile('${w.client_id}','report')" style="background:var(--card);border:1px solid var(--border)">
               👤 Профиль</button>
@@ -1859,18 +1869,21 @@ function seniorTab(tab) {
   if (tab==='groups')   renderSeniorGroups();
 }
 async function renderSeniorGroups() {
+  const isSenior = STATE.profile.role === 'senior_trainer';
   const branches = STATE.profile.branches||[];
   $('#tab-content').innerHTML=`<div class="tab-pad">
     <div class="section-header"><h3>Группы</h3></div>
-    <div id="pending-subs"></div>
+    ${isSenior?'<div id="pending-subs"></div>':''}
     <h4 style="margin-bottom:8px">Мои группы</h4>
     <div id="groups-list"><div class="center-screen"><div class="spinner"></div></div></div>
-    <h4 style="margin-top:20px;margin-bottom:8px">Назначить тренера в своём филиале</h4>
-    <div id="senior-assign-form"></div>
+    ${isSenior?`<h4 style="margin-top:20px;margin-bottom:8px">Назначить тренера в своём филиале</h4>
+    <div id="senior-assign-form"></div>`:''}
   </div>`;
   await loadSeniorGroupsList();
-  await renderPendingSubstitutions();
-  await renderSeniorAssignForm();
+  if (isSenior) {
+    await renderPendingSubstitutions();
+    await renderSeniorAssignForm();
+  }
 }
 
 async function renderSeniorAssignForm() {
@@ -1983,7 +1996,11 @@ async function loadSeniorGroupsList() {
       <div class="staff-card" style="flex-direction:column;align-items:flex-start;gap:8px">
         <div style="display:flex;justify-content:space-between;width:100%">
           <div>
-            <div class="staff-fio">${g.group_types?.name||'Группа'}</div>
+            <div class="staff-fio">
+              ${g.role==='суша'?'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#eab308;margin-right:4px;vertical-align:middle"></span>':
+                g.role==='вода'?'<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;margin-right:4px;vertical-align:middle"></span>':''}
+              ${g.group_types?.name||'Группа'}${g.role?' ('+g.role+')':''}
+            </div>
             <div class="staff-meta">${g.branch} · с ${g.subscription_start||'—'}</div>
           </div>
           <button class="btn btn-sm btn-primary"
