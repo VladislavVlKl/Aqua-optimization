@@ -83,6 +83,8 @@
     .empty-hour { opacity: .15; font-size: 10px; color: var(--hint); }
 
     .updated { font-size: 11px; color: var(--hint); padding: 10px 16px; text-align: center; }
+    .slot-duty { background: rgba(245,158,11,.15); color: #f59e0b; border-left: 3px solid #f59e0b; }
+    .leg-duty  { background: rgba(245,158,11,.2);  color: #f59e0b; }
 
     @media (max-width: 480px) {
       th, td { min-width: 70px; }
@@ -112,6 +114,7 @@
   <div class="legend">
     <span class="legend-item leg-pt">ПТ (персональные)</span>
     <span class="legend-item leg-group">Групповые занятия</span>
+    <span class="legend-item leg-duty" id="duty-legend" style="display:none">Дежурства</span>
   </div>
 
   <div id="content"><div class="spinner"></div></div>
@@ -125,6 +128,8 @@
 
     const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     let allSlots = [];
+
+    let allDuties = [];
 
     async function load() {
       const { data, error } = await _sb.from('schedule_slots')
@@ -141,18 +146,33 @@
 
       allSlots = data || [];
 
+      // Load duties for current week
+      const now = new Date();
+      const mon = new Date(now);
+      mon.setDate(now.getDate() - (now.getDay()+6)%7);
+      mon.setHours(0,0,0,0);
+      const sun = new Date(mon); sun.setDate(mon.getDate()+7);
+      const { data: duties } = await _sb.from('duties')
+        .select('*, profiles(fio)')
+        .gte('start_time', mon.toISOString())
+        .lt('start_time', sun.toISOString())
+        .not('end_time','is',null);
+      allDuties = duties || [];
+
       // Populate branch filter
       const branches = [...new Set(allSlots.map(s => s.branch).filter(Boolean))].sort();
       const bf = document.getElementById('branch-filter');
-      branches.forEach(b => {
-        const o = document.createElement('option'); o.value = b; o.textContent = b;
-        bf.appendChild(o);
-      });
+      if (bf.options.length <= 1) {
+        branches.forEach(b => {
+          const o = document.createElement('option'); o.value = b; o.textContent = b;
+          bf.appendChild(o);
+        });
+      }
 
       document.getElementById('sub-title').textContent =
         `Обновлено: ${new Date().toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`;
       document.getElementById('updated-at').textContent =
-        'Только ПТ и групповые занятия. Дежурства не отображаются.';
+        'ПТ и групповые занятия. При выборе филиала — также дежурства текущей недели.';
 
       render();
     }
@@ -160,6 +180,10 @@
     function render() {
       const branch = document.getElementById('branch-filter')?.value || '';
       const type   = document.getElementById('type-filter')?.value   || '';
+
+      // Show/hide duty legend
+      const dutyLegend = document.getElementById('duty-legend');
+      if (dutyLegend) dutyLegend.style.display = branch ? '' : 'none';
 
       let slots = allSlots;
       if (branch) slots = slots.filter(s => s.branch === branch);
@@ -174,6 +198,22 @@
         if (!grid[s.day_of_week][hKey]) grid[s.day_of_week][hKey] = [];
         grid[s.day_of_week][hKey].push(s);
       });
+
+      // Add duties to grid when branch is selected
+      const dutyGrid = {};
+      for (let d = 0; d < 7; d++) dutyGrid[d] = {};
+      if (branch) {
+        const mon = new Date();
+        mon.setDate(mon.getDate() - (mon.getDay()+6)%7);
+        mon.setHours(0,0,0,0);
+        allDuties.filter(d => d.branch === branch).forEach(duty => {
+          const dt = new Date(duty.start_time);
+          const dow = (dt.getDay()+6)%7;
+          const hKey = String(dt.getHours()).padStart(2,'0') + ':00';
+          if (!dutyGrid[dow][hKey]) dutyGrid[dow][hKey] = [];
+          dutyGrid[dow][hKey].push(duty);
+        });
+      }
 
       const content = document.getElementById('content');
       if (!slots.length) {
@@ -205,20 +245,25 @@
                 <tr>
                   <td class="time-cell">${h}</td>
                   ${[0,1,2,3,4,5,6].map(dow => {
-                    const daySlots = grid[dow][h] || [];
-                    return `<td>${daySlots.map(s => {
-                      const isPt = s.slot_type === 'pt';
-                      const name  = isPt
-                        ? (s.clients?.fio || 'ПТ')
-                        : (s.group_types?.name || 'Группа');
-                      const sub   = isPt
-                        ? `${s.profiles?.fio?.split(' ')[0]||''} · ${s.start_time.slice(0,5)}`
-                        : `${s.avg_headcount ? s.avg_headcount+'чел.' : ''} · ${s.start_time.slice(0,5)}`;
-                      return `<div class="slot slot-${s.slot_type}">
-                        <div class="slot-name">${name}</div>
-                        <div class="slot-sub">${sub}</div>
-                      </div>`;
-                    }).join('')}</td>`;
+                    const daySlots  = grid[dow][h] || [];
+                    const dayDuties = dutyGrid[dow][h] || [];
+                    const allItems  = [
+                      ...daySlots.map(s => {
+                        const isPt = s.slot_type === 'pt';
+                        const name = isPt ? (s.clients?.fio||'ПТ') : (s.group_types?.name||'Группа');
+                        const sub  = isPt
+                          ? `${s.profiles?.fio?.split(' ')[0]||''} · ${s.start_time.slice(0,5)}`
+                          : `${s.avg_headcount?s.avg_headcount+'чел.':''} · ${s.start_time.slice(0,5)}`;
+                        return `<div class="slot slot-${s.slot_type}"><div class="slot-name">${name}</div><div class="slot-sub">${sub}</div></div>`;
+                      }),
+                      ...dayDuties.map(d => {
+                        const start = new Date(d.start_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+                        const end   = new Date(d.end_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+                        const hrs   = ((new Date(d.end_time)-new Date(d.start_time))/3600000).toFixed(1);
+                        return `<div class="slot slot-duty"><div class="slot-name">${d.profiles?.fio?.split(' ')[0]||'?'}</div><div class="slot-sub">Деж. ${start}–${end} · ${hrs}ч</div></div>`;
+                      })
+                    ];
+                    return `<td>${allItems.join('')}</td>`;
                   }).join('')}
                 </tr>`).join('')}
             </tbody>
