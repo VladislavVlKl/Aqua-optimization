@@ -1879,7 +1879,7 @@ async function loadSeniorGroupsList() {
             <div class="staff-meta">${g.branch} · с ${g.subscription_start||'—'}</div>
           </div>
           <button class="btn btn-sm btn-primary"
-            onclick="renderGroupDetail('${g.id}')">Открыть</button>
+            onclick="g.group_types?.type==='children'?renderGroupDetail('${g.id}'):renderAdultGroupDetail('${g.id}')">Открыть</button>
         </div>
       </div>`).join('');
   } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
@@ -1889,6 +1889,12 @@ async function renderGroupDetail(groupId) {
   const month = new Date().toISOString().slice(0,7)+'-01';
   loading('Загрузка группы...');
   try {
+    // Check group type first - route adult groups to separate handler
+    const {data:groupInfo} = await sb().from('trainer_groups')
+      .select('*, group_types(name,type)').eq('id',groupId).single();
+    if (groupInfo?.group_types?.type !== 'children') {
+      renderAdultGroupDetail(groupId); return;
+    }
     const [clients, payments, notes] = await Promise.all([
       DB.getGroupClients(groupId),
       DB.getGroupPayments(groupId, month),
@@ -2014,6 +2020,7 @@ function adminTab(tab) {
   if (tab==='events')        renderEventsTab();
   if (tab==='control')       renderAdminControl();
   if (tab==='tech')          renderAdminTech();
+  if (tab==='schedule')      renderCoordinatorSchedule();
 }
 
 // ─ ADMIN: АНАЛИТИКА ──────────────────────────
@@ -2832,6 +2839,19 @@ async function renderAdminControl() {
         <div class="ci-main">${t.fio}</div>
         <div class="ci-sub">${(t.branches||[]).join(', ')}</div>
       </div>`).join('')}</div>`);
+    // Add delete requests
+    const deleteReqs = await DB.getAllDeleteRequests().catch(()=>[]);
+    if (deleteReqs.length) sections.unshift(`<div class="control-section">
+      <div class="control-title danger">🗑 Запросы на удаление (${deleteReqs.length})</div>
+      ${deleteReqs.map(r=>`<div class="control-item">
+        <div class="ci-main">${r.client_name} <span class="hint">← ${r.profiles?.fio||'?'}</span></div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-sm btn-danger" onclick="doApproveDelete('${r.id}','${r.client_id}','${encodeURIComponent(r.client_name||'')}')">Удалить</button>
+          <button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+            onclick="doRejectDelete('${r.id}')">Отклонить</button>
+        </div>
+      </div>`).join('')}
+    </div>`);
     $('#tab-content').innerHTML=`<div class="tab-pad">
       <h3>Контроль</h3><p class="hint" style="margin-bottom:16px">На ${todayStr()}</p>
       ${sections.length?sections.join(''):'<div class="empty-state">✅<p>Проблем не обнаружено</p></div>'}
@@ -3450,7 +3470,8 @@ async function doSaveTrainerProfile() {
   if (pin && !/^\d{4}$/.test(pin)) return toast('PIN: 4 цифры','error');
   if (pin && pin !== pin2) return toast('PIN не совпадает','error');
   try {
-    const fields = {fio, phone: phone||null};
+    const fields = {fio};
+    if (phone) fields.phone = phone;
     if (pin) fields.pincode = pin;
     await DB.updateProfile(STATE.profile.id, fields);
     STATE.profile = {...STATE.profile, ...fields};
@@ -3624,8 +3645,14 @@ async function renderAdultGroupHeadcount(groupId) {
     m.innerHTML=`<div class="modal">
       <div class="modal-header"><h3>Отметить занятие</h3>
         <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
-      <div class="form-group"><label>Дата</label>
-        <input type="date" id="ag-hc-date" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div style="display:flex;gap:8px">
+        <div class="form-group" style="flex:1"><label>Дата</label>
+          <input type="date" id="ag-hc-date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="form-group" style="flex:1"><label>Время начала</label>
+          <select id="ag-hc-time" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text)">
+            ${Array.from({length:14},(_,i)=>{const h=7+i;return `<option value="${String(h).padStart(2,'0')}:00">${String(h).padStart(2,'0')}:00</option>`;}).join('')}
+          </select></div>
+      </div>
       <div style="margin-bottom:12px">
         <label style="font-size:13px;font-weight:600">Кто был:</label>
         ${clients.map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
@@ -3656,12 +3683,14 @@ async function doLogAdultGroupSession(groupId) {
     headcount = parseInt(document.getElementById('ag-hc-count')?.value)||0;
   }
   if (!headcount) return toast('Укажите хотя бы одного участника','error');
+  const time = document.getElementById('ag-hc-time')?.value||'09:00';
   try {
-    const groupInfo = STATE.profile.branches?.[0]||'';
-    await DB.logGroupSession(STATE.profile.id, null, groupInfo, date, headcount);
+    const {data:tg} = await sb().from('trainer_groups')
+      .select('branch,group_type_id').eq('id',groupId).single();
+    await DB.logGroupSession(STATE.profile.id, tg?.group_type_id||null, tg?.branch||STATE.profile.branches?.[0]||'', date, headcount);
     document.querySelector('.modal-overlay')?.remove();
     const rate = headcount>=7?130000:headcount>=4?120000:110000;
-    toast(`Записано: ${headcount} чел. · ${(rate/1000).toFixed(0)}к сум ✅`,'success');
+    toast(`Записано: ${headcount} чел. · ${(rate/1000).toFixed(0)}к сум · ${time} ✅`,'success');
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
 
@@ -3712,40 +3741,26 @@ async function renderCoordinatorSchedule() {
       const to   = sun.toISOString();
       
       // Load duties for the week for this branch
-      const {data:duties} = await _sb.from('duties')
-        .select('*, profiles(fio)')
-        .eq('branch',branch)
-        .gte('start_time',from).lt('start_time',to)
-        .not('end_time','is',null);
+      const dutiesRes = await DB.getDutiesForSchedule(branch, from, to);
+      const duties = dutiesRes||[];
 
       let html = '';
       for (let d=0; d<7; d++) {
         const day = new Date(mon); day.setDate(mon.getDate()+d);
         const dayStr = day.toISOString().slice(0,10);
-        const dayDuties = (duties||[]).filter(duty=>{
-          return duty.start_time?.slice(0,10) === dayStr;
-        });
-        if (!dayDuties.length && d < 5) {
-          html += `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
-            <div style="font-size:11px;font-weight:600;color:var(--hint)">${DAYS[d]} ${day.getDate()}.${day.getMonth()+1}</div>
-            <div style="font-size:11px;color:var(--hint);padding:4px 0">Нет дежурств</div>
-          </div>`;
-        } else if (dayDuties.length) {
-          html += `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
-            <div style="font-size:11px;font-weight:600;color:var(--hint)">${DAYS[d]} ${day.getDate()}.${day.getMonth()+1}</div>
-            ${dayDuties.map(duty=>{
-              const h = ((new Date(duty.end_time)-new Date(duty.start_time))/3600000).toFixed(1);
-              const start = new Date(duty.start_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
-              const end   = new Date(duty.end_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
-              return `<div style="font-size:12px;padding:3px 0;color:var(--text)">
-                🟢 ${duty.profiles?.fio||'?'} · ${start}–${end} (${h}ч)
-              </div>`;
-            }).join('')}
-          </div>`;
-        }
+        const dayDuties = duties.filter(duty=>duty.start_time?.slice(0,10)===dayStr);
+        html += `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="font-size:11px;font-weight:600;color:var(--hint);margin-bottom:4px">${DAYS[d]} ${day.getDate()}.${day.getMonth()+1}</div>
+          ${dayDuties.length?dayDuties.map(duty=>{
+            const h = ((new Date(duty.end_time)-new Date(duty.start_time))/3600000).toFixed(1);
+            const start = new Date(duty.start_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+            const end   = new Date(duty.end_time).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
+            return `<div style="font-size:12px;padding:2px 0;color:var(--text)">
+              🟢 ${duty.profiles?.fio||'?'} · ${start}–${end} · ${h}ч</div>`;
+          }).join(''):`<div style="font-size:11px;color:var(--hint);padding:2px 0">Нет дежурств</div>`}
+        </div>`;
       }
-      
-      body.innerHTML = html || '<p class="hint">Нет данных за эту неделю</p>';
+      body.innerHTML = html;
     } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
   };
 
