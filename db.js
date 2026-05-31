@@ -1110,7 +1110,23 @@ Object.assign(DB, {
   },
   async approveDeleteRequest(requestId, clientId) {
     await sb().from('delete_requests').update({status:'approved'}).eq('id',requestId);
-    const {error} = await sb().from('clients').delete().eq('id',clientId);
+    await this.forceDeleteClient(clientId);
+  },
+  async forceDeleteClient(clientId) {
+    // Delete all related records first, then the client
+    await sb().from('workouts').delete().eq('client_id', clientId);
+    await sb().from('client_transfers').delete().eq('client_id', clientId);
+    // Delete subscriptions and their goals
+    const {data:subs} = await sb().from('subscriptions').select('id').eq('client_id',clientId);
+    if (subs?.length) {
+      for (const s of subs) {
+        await sb().from('training_goals').delete().eq('subscription_id', s.id);
+        await sb().from('session_notes').delete().eq('subscription_id', s.id);
+      }
+    }
+    await sb().from('subscriptions').delete().eq('client_id', clientId);
+    await sb().from('delete_requests').delete().eq('client_id', clientId);
+    const {error} = await sb().from('clients').delete().eq('id', clientId);
     if (error) throw error;
   },
   async rejectDeleteRequest(requestId) {
