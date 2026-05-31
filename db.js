@@ -206,6 +206,19 @@ async deleteClient(id) {
     const {data,error} = await sb().from('group_types').select('*').order('name');
     if (error) throw error; return data||[];
   },
+
+  async updateGroupType(id, fields) {
+    const {error} = await sb().from('group_types').update(fields).eq('id',id);
+    if (error) throw error;
+  },
+  async deleteGroupType(id) {
+    // Unassign all trainers first
+    await sb().from('trainer_groups')
+      .update({subscription_end: new Date().toISOString().slice(0,10)})
+      .eq('group_type_id',id).is('subscription_end',null);
+    const {error} = await sb().from('group_types').delete().eq('id',id);
+    if (error) throw error;
+  },
   async addGroupType(fields) {
     const {data,error} = await sb().from('group_types').insert(fields).select().single();
     if (error) throw error; return data;
