@@ -1882,41 +1882,94 @@ async function renderSeniorAssignForm() {
       DB.getProfilesByRole('senior_trainer'),
       DB.getGroupTypes(),
     ]);
-    // Only trainers in same branch
     const myTrainers = [...allTrainers, ...allSeniors].filter(t=>
       (t.branches||[]).some(b=>branches.includes(b))
     );
+    const trainerOpts = `<option value="">— выберите —</option>${myTrainers.map(t=>`<option value="${t.id}">${t.fio}</option>`).join('')}`;
+    const gtOpts = gts.map(g=>`<option value="${g.id}" data-type="${g.type}" data-name="${g.name}">${g.name}</option>`).join('');
+    const branchOpts = branches.map(b=>`<option>${b}</option>`).join('');
+
     form.innerHTML=`
-      <div class="form-group"><label>Тренер</label>
-        <select id="sa-trainer">
-          <option value="">— выберите —</option>
-          ${myTrainers.map(t=>`<option value="${t.id}">${t.fio}</option>`).join('')}
-        </select></div>
-      <div class="form-group"><label>Тип группы</label>
-        <select id="sa-type">
-          ${gts.map(g=>`<option value="${g.id}" data-type="${g.type}">${g.name}</option>`).join('')}
-        </select></div>
-      <div class="form-group"><label>Филиал</label>
-        <select id="sa-branch">
-          ${branches.map(b=>`<option>${b}</option>`).join('')}
-        </select></div>
-      <button class="btn btn-primary" onclick="doSeniorAssignGroup()">Назначить</button>`;
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:12px">Новое назначение</div>
+        <div class="form-group"><label>Тренер</label>
+          <select id="sa-trainer">${trainerOpts}</select></div>
+        <div class="form-group"><label>Тип группы</label>
+          <select id="sa-type" onchange="onSaTypeChange(this)">${gtOpts}</select></div>
+        <div class="form-group"><label>Филиал</label>
+          <select id="sa-branch">${branchOpts}</select></div>
+        <div id="sa-rate-section">
+          <div class="form-group"><label>Процент тренеру (%)</label>
+            <input id="sa-rate" type="number" value="40" min="0" max="100"></div>
+        </div>
+        <div id="sa-adult-note" style="display:none;background:rgba(16,185,129,.1);border-radius:8px;padding:10px;font-size:12px;color:var(--hint);margin-bottom:12px">
+          ✅ Ставка по явке: 1-3 чел = 110к · 4-6 = 120к · 7+ = 130к
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doSeniorAssignGroup()">Назначить</button>
+      </div>
+
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:12px">Добавить второго тренера</div>
+        <div class="form-group"><label>Группа (в вашем филиале)</label>
+          <select id="sa2-group">
+            <option value="">— выберите —</option>
+            ${gts.map(g=>`<option value="${g.id}" data-type="${g.type}">${g.name}</option>`).join('')}
+          </select></div>
+        <div class="form-group"><label>Второй тренер</label>
+          <select id="sa2-trainer">${trainerOpts}</select></div>
+        <div class="form-group"><label>Филиал</label>
+          <select id="sa2-branch">${branchOpts}</select></div>
+        <div id="sa2-rate-section">
+          <div class="form-group"><label>Процент (%)</label>
+            <input id="sa2-rate" type="number" value="20" min="0" max="100"></div>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doSeniorAssignSecond()">Добавить второго тренера</button>
+      </div>`;
+
+    // Init type change
+    const sel = document.getElementById('sa-type');
+    if (sel) onSaTypeChange(sel);
   } catch(e) { form.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
 }
+
+function onSaTypeChange(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const isAdult = opt?.dataset.type === 'adult';
+  const rateSection = document.getElementById('sa-rate-section');
+  const adultNote   = document.getElementById('sa-adult-note');
+  if (rateSection) rateSection.style.display = isAdult ? 'none' : '';
+  if (adultNote)   adultNote.style.display   = isAdult ? '' : 'none';
+}
+
 async function doSeniorAssignGroup() {
   const trainerId   = parseInt(document.getElementById('sa-trainer')?.value);
   const groupTypeId = parseInt(document.getElementById('sa-type')?.value);
   const branch      = document.getElementById('sa-branch')?.value;
+  const opt         = document.querySelector('#sa-type option:checked');
+  const isAdult     = opt?.dataset.type === 'adult';
+  const rateType    = isAdult ? 'headcount' : 'percent';
+  const rateValue   = isAdult ? 0 : (parseFloat(document.getElementById('sa-rate')?.value)||40);
   if (!trainerId||!groupTypeId||!branch) return toast('Заполните все поля','error');
-  const typeEl = document.querySelector('#sa-type option:checked');
-  const isChildren = typeEl?.dataset.type === 'children';
-  // Adult groups: use headcount rates. Children: default 40%
-  const rateType  = isChildren ? 'percent' : 'headcount';
-  const rateValue = isChildren ? 40 : 0;
   try {
     await DB.addTrainerGroup(trainerId, groupTypeId, branch, todayStr(), rateType, rateValue, null);
     toast('✅ Назначено','success');
     await loadSeniorGroupsList();
+    await renderSeniorAssignForm();
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
+async function doSeniorAssignSecond() {
+  const groupTypeId = parseInt(document.getElementById('sa2-group')?.value);
+  const trainerId   = parseInt(document.getElementById('sa2-trainer')?.value);
+  const branch      = document.getElementById('sa2-branch')?.value;
+  const opt         = document.querySelector('#sa2-group option:checked');
+  const isAdult     = opt?.dataset.type === 'adult';
+  const rateType    = isAdult ? 'headcount' : 'percent';
+  const rateValue   = isAdult ? 0 : (parseFloat(document.getElementById('sa2-rate')?.value)||20);
+  if (!trainerId||!groupTypeId||!branch) return toast('Заполните все поля','error');
+  try {
+    await DB.addTrainerGroup(trainerId, groupTypeId, branch, todayStr(), rateType, rateValue, null);
+    toast('✅ Второй тренер добавлен','success');
     await renderSeniorAssignForm();
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
