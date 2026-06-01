@@ -264,7 +264,9 @@ async function renderHomeTab() {
       <div class="form-group"><label>Тип тренировки</label>
         <select id="wk-type" onchange="onWkTypeChange(this)">
           <option value="regular">Обычная ПТ</option>
-          <option value="dropin">Разовое (${fmt(RATES.drop_in_price)} сум)</option>
+          <option value="dropin1">Разовое 1кт (${fmt(RATES.pt[1])} сум)</option>
+          <option value="dropin2">Разовое 2кт (${fmt(RATES.pt[2])} сум)</option>
+          <option value="dropin3">Разовое 3кт (${fmt(RATES.pt[3])} сум)</option>
           <option value="debt">В долг</option>
         </select>
       </div>
@@ -410,7 +412,8 @@ async function renderWorkoutsTab() {
 
 function onWkTypeChange(sel) {
   const reg=document.getElementById('wk-regular-opts');
-  if (reg) reg.style.display=sel.value==='dropin'?'none':'';
+  const isDropIn=sel.value.startsWith('dropin');
+  if (reg) reg.style.display=isDropIn?'none':'';
 }
 function onClientChange(sel) {
   const opt=sel.options[sel.selectedIndex];
@@ -418,11 +421,12 @@ function onClientChange(sel) {
   const age=parseInt(opt?.dataset.age||'99');
   const diUsed=opt?.dataset.di==='true';
   if (sel.value&&bal<=0) toast('⚠️ Нулевой баланс!','error');
-  const diOpt=[...document.getElementById('wk-type')?.options||[]].find(o=>o.value==='dropin');
-  if (diOpt) {
-    if (isChild(age)&&diUsed) { diOpt.disabled=true; diOpt.textContent='Разовое (недоступно — уже использовано)'; }
-    else { diOpt.disabled=false; diOpt.textContent=`Разовое посещение (${fmt(RATES.drop_in_price)} сум)`; }
-  }
+  // Блокируем разовые для детей, уже использовавших разовое
+  const diOpts=[...document.getElementById('wk-type')?.options||[]].filter(o=>o.value.startsWith('dropin'));
+  diOpts.forEach(o=>{
+    if (isChild(age)&&diUsed) { o.disabled=true; }
+    else { o.disabled=false; }
+  });
 }
 function renderDateFields() {
   const count=parseInt($('#wk-count')?.value||1);
@@ -464,7 +468,8 @@ async function doLogWorkout() {
   const opt=clientSel.options[clientSel.selectedIndex];
   const category=parseInt(opt.dataset.cat);
   const type=$('#wk-type')?.value||'regular';
-  const isDropIn=type==='dropin', isDebt=type==='debt';
+  const isDropIn=type.startsWith('dropin'), isDebt=type==='debt';
+  const dropInCat=isDropIn?parseInt(type.replace('dropin',''))||1:null;
   const count=isDropIn?1:parseInt($('#wk-count')?.value||1);
   const branch=getBranch();
   if (!branch) return toast('Выберите филиал','error');
@@ -521,6 +526,7 @@ async function doLogWorkout() {
     category_at_moment:category,branch,
     workout_date:new Date(d).toISOString(),
     notes:notes||null,is_debt:isDebt,is_drop_in:isDropIn,
+    drop_in_category:dropInCat,
   }));
   try {
     let result;
@@ -1347,7 +1353,7 @@ async function loadTrainerReport(year,month) {
           <div class="hi-main">
             <span class="hi-client">${w.clients?.fio||'—'}</span>
             <span class="hi-cat cat-${w.category_at_moment}">Кат.${w.category_at_moment}</span>
-            ${w.is_drop_in?'<span class="drop-badge">Разовая</span>':''}
+            ${w.is_drop_in?`<span class="drop-badge">Разовая ${w.drop_in_category||1}кт</span>`:''}
             ${w.is_debt&&!w.debt_confirmed_at?'<span class="debt-badge">В долг</span>':''}
             ${w.is_debt&&w.debt_confirmed_at?'<span class="paid-badge">Оплачено</span>':''}
           </div>
@@ -2430,7 +2436,7 @@ async function adminDetail(trainerId,fioEnc,year,month) {
           <div class="hi-main">
             <span class="hi-client">${w.clients?.fio||'—'}</span>
             <span class="hi-cat cat-${w.category_at_moment}">Кат.${w.category_at_moment}</span>
-            ${w.is_drop_in?'<span class="drop-badge">Разовая</span>':''}
+            ${w.is_drop_in?`<span class="drop-badge">Разовая ${w.drop_in_category||1}кт</span>`:''}
             ${w.is_debt&&!w.debt_confirmed_at?'<span class="debt-badge">В долг</span>':''}
           </div>
           <div class="hi-sub">${fmtDT(w.workout_date)} · ${w.branch}</div>
