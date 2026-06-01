@@ -1134,9 +1134,12 @@ Object.assign(DB, {
   },
   async forceDeleteClient(clientId) {
     // Delete all related records first, then the client
+    await sb().from('schedule_slots').delete().eq('client_id', clientId);
     await sb().from('workouts').delete().eq('client_id', clientId);
     await sb().from('client_transfers').delete().eq('client_id', clientId);
-    // Delete subscriptions and their goals
+    await sb().from('training_goals').delete().eq('client_id', clientId);
+    await sb().from('session_notes').delete().eq('client_id', clientId);
+    // Delete subscriptions and their goals (by subscription_id)
     const {data:subs} = await sb().from('subscriptions').select('id').eq('client_id',clientId);
     if (subs?.length) {
       for (const s of subs) {
