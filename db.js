@@ -1133,13 +1133,14 @@ Object.assign(DB, {
     await this.forceDeleteClient(clientId);
   },
   async forceDeleteClient(clientId) {
-    // Delete all related records first, then the client
+    // Правильный порядок: сначала дочерние таблицы, потом родительские
+    // session_notes ссылается на workouts — удаляем ДО workouts
     await sb().from('schedule_slots').delete().eq('client_id', clientId);
+    await sb().from('session_notes').delete().eq('client_id', clientId);
     await sb().from('workouts').delete().eq('client_id', clientId);
     await sb().from('client_transfers').delete().eq('client_id', clientId);
     await sb().from('training_goals').delete().eq('client_id', clientId);
-    await sb().from('session_notes').delete().eq('client_id', clientId);
-    // Delete subscriptions and their goals (by subscription_id)
+    // Дополнительно чистим по subscription_id
     const {data:subs} = await sb().from('subscriptions').select('id').eq('client_id',clientId);
     if (subs?.length) {
       for (const s of subs) {
