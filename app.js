@@ -1291,14 +1291,17 @@ async function loadTrainerReport(year,month) {
   const body=document.getElementById('rep-body'); if (!body) return;
   body.innerHTML=`<div class="center-screen"><div class="spinner"></div></div>`;
   try {
-    const [workouts,duties,trainerGroups,groupSessions]=await Promise.all([
+    const fromDay = `${year}-${String(month).padStart(2,'0')}-01`;
+    const [workouts,duties,trainerGroups,groupSessions,groupPayouts,groupSubstitutions]=await Promise.all([
       DB.getWorkouts(STATE.profile.id,year,month),
       DB.getDuties(STATE.profile.id,year,month),
       DB.getTrainerGroups(STATE.profile.id),
       DB.getGroupSessions(STATE.profile.id,year,month),
+      sb().from('group_trainer_payouts').select('*').eq('trainer_id',STATE.profile.id).eq('month',fromDay).then(r=>r.data||[]),
+      sb().from('group_substitutions').select('*, trainer_groups(*, group_types(name))').eq('substitute_trainer_id',STATE.profile.id).gte('session_date',fromDay).lt('session_date',new Date(year,month,1).toISOString().slice(0,10)).then(r=>r.data||[]),
     ]);
     const adjustment=await DB.getAdjustment(STATE.profile.id,year,month);
-    const sal=calcSalary({workouts,duties,trainerGroups,groupSessions,adjustment});
+    const sal=calcSalary({workouts,duties,trainerGroups,groupSessions,adjustment,groupPayouts,groupSubstitutions,trainerId:STATE.profile.id});
 
     // Ожидающие подтверждения (замены)
     const pending = await DB.getPendingConfirmations(STATE.profile.id);
@@ -1339,7 +1342,7 @@ async function loadTrainerReport(year,month) {
 
       <div class="summary-cards">
         <div class="summary-card"><div class="s-val">${sal.cat[1]+sal.cat[2]+sal.cat[3]}</div><div class="s-lbl">ПТ</div></div>
-        <div class="summary-card"><div class="s-val">${sal.cat.dropIn}</div><div class="s-lbl">Разовые</div></div>
+        <div class="summary-card"><div class="s-val">${(sal.cat.dropIn1||0)+(sal.cat.dropIn2||0)+(sal.cat.dropIn3||0)}</div><div class="s-lbl">Разовые</div></div>
         <div class="summary-card"><div class="s-val">${sal.cat.debt}</div><div class="s-lbl">В долг</div></div>
         <div class="summary-card"><div class="s-val">${sal.hours.toFixed(1)}ч</div><div class="s-lbl">Деж.</div></div>
         <div class="summary-card accent" style="grid-column:span 2">
@@ -1889,7 +1892,9 @@ async function renderSeniorGroups() {
   const isSenior = STATE.profile.role === 'senior_trainer';
   const branches = STATE.profile.branches||[];
   $('#tab-content').innerHTML=`<div class="tab-pad">
-    <div class="section-header"><h3>Группы</h3></div>
+    <div class="section-header"><h3>Группы</h3>
+      ${isSenior?`<button class="btn btn-sm" onclick="renderSubstitutionsApproval()">🔄 Замены</button>`:''}
+    </div>
     ${isSenior?'<div id="pending-subs"></div>':''}
     <h4 style="margin-bottom:8px">Мои группы</h4>
     <div id="groups-list"><div class="center-screen"><div class="spinner"></div></div></div>
@@ -2020,8 +2025,12 @@ async function loadSeniorGroupsList() {
             </div>
             <div class="staff-meta">${g.branch} · с ${g.subscription_start||'—'}</div>
           </div>
-          <button class="btn btn-sm btn-primary"
-            onclick="${g.group_types?.type==='children'?`renderGroupDetail('${g.id}')`:`renderAdultGroupDetail('${g.id}')`}">Открыть</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-primary"
+              onclick="${g.group_types?.type==='children'?`renderGroupDetail('${g.id}')`:`renderAdultGroupDetail('${g.id}')`}">Открыть</button>
+            ${g.group_types?.type==='children'?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+              onclick="renderGroupMonthReport('${g.id}','${new Date().toISOString().slice(0,7)+'-01'}')">📊 Отчёт</button>`:''}
+          </div>
         </div>
       </div>`).join('');
   } catch(e) { body.innerHTML='<p class="hint">Ошибка</p>'; console.error(e); }
@@ -2065,11 +2074,14 @@ async function renderGroupDetail(groupId) {
                 <div class="staff-fio">${c.name}${c.age?`, ${c.age} лет`:''}</div>
                 <div class="staff-meta">${c.level} · ${fmt(c.monthly_price)} сум/мес</div>
               </div>
-              <div style="display:flex;gap:6px;align-items:center">
-                <span style="font-size:11px;padding:3px 8px;border-radius:12px;
-                  background:${paid?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)'};
-                  color:${paid?'#10b981':'#ef4444'}">
-                  ${paid?'Оплачен':'Не оплачен'}</span>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                  <span style="font-size:11px;padding:3px 8px;border-radius:12px;
+                    background:${paid?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)'};
+                    color:${paid?'#10b981':'#ef4444'}">
+                    ${paid?`Оплачен · ${fmt(pay?.amount||0)} сум`:'Не оплачен'}</span>
+                  ${pay?.sub_start?`<span style="font-size:10px;color:var(--hint)">${fmtDate(pay.sub_start)}${pay.sub_end?' – '+fmtDate(pay.sub_end):''}</span>`:''}
+                </div>
                 <button class="btn btn-sm" onclick="toggleGroupPayment('${groupId}','${c.id}',${paid?'false':'true'},${c.monthly_price},'${month}')">
                   ${paid?'↩':'✓'}</button>
               </div>
@@ -2358,16 +2370,21 @@ function renderSummaryTable(data,year,month,isAdmin) {
   const {workouts,duties,trainerGroups,groupSessions,profiles,adjustments=[]}=data;
   if (!profiles.length) return '<p class="hint">Нет тренеров</p>';
   const adjMap={}; (adjustments||[]).forEach(a=>{adjMap[a.trainer_id]=a;});
+  const {groupPayouts=[],groupSubstitutions=[],ptSubstitutions=[]}=data;
   const rows=profiles.map(p=>{
     const sal=calcSalary({
-      workouts:workouts.filter(w=>w.trainer_id===p.id),
+      workouts:[...workouts.filter(w=>w.trainer_id===p.id),
+                ...ptSubstitutions.filter(w=>w.trainer_id===p.id)],
       duties:duties.filter(d=>d.trainer_id===p.id),
       trainerGroups:trainerGroups.filter(tg=>tg.trainer_id===p.id),
       groupSessions:groupSessions.filter(gs=>gs.trainer_id===p.id),
       adjustment:adjMap[p.id]||null,
+      groupPayouts:groupPayouts.filter(gp=>gp.trainer_id===p.id),
+      groupSubstitutions:groupSubstitutions,
+      trainerId:p.id,
     });
     return {p,sal};
-  }).filter(r=>r.sal.cat[1]+r.sal.cat[2]+r.sal.cat[3]+r.sal.hours+r.sal.cat.dropIn>0);
+  }).filter(r=>r.sal.cat[1]+r.sal.cat[2]+r.sal.cat[3]+r.sal.hours+(r.sal.cat.dropIn1||0)+(r.sal.cat.dropIn2||0)+(r.sal.cat.dropIn3||0)>0);
   if (!rows.length) return '<p class="hint">Нет данных за период</p>';
   const grand=rows.reduce((s,r)=>s+r.sal.total,0);
   return `<div class="admin-table-wrap"><table class="admin-table">
@@ -2381,7 +2398,7 @@ function renderSummaryTable(data,year,month,isAdmin) {
         onclick="${isAdmin?`adminDetail(${p.id},'${encodeURIComponent(p.fio)}',${year},${month})`:'void(0)'}">
         <td>${p.fio}</td>
         <td>${sal.cat[1]}</td><td>${sal.cat[2]}</td><td>${sal.cat[3]}</td>
-        <td>${sal.cat.dropIn}</td><td>${sal.cat.debt}</td>
+        <td>${(sal.cat.dropIn1||0)+(sal.cat.dropIn2||0)+(sal.cat.dropIn3||0)}</td><td>${sal.cat.debt}</td>
         <td>${sal.hours.toFixed(1)}ч</td>
         <td>${sal.childSum+sal.adultSum>0?fmt(sal.childSum+sal.adultSum):'—'}</td>
         ${isAdmin?`<td>${sal.bonus?'+'+fmt(sal.bonus):''}${sal.penalty?'−'+fmt(sal.penalty):''}</td>`:''}
@@ -2402,7 +2419,7 @@ async function adminDetail(trainerId,fioEnc,year,month) {
   $('#tab-content').innerHTML=`<div class="tab-pad"><h3>${fio}</h3><div class="center-screen"><div class="spinner"></div></div></div>`;
   try {
     const d=await DB.getTrainerDetail(trainerId,year,month);
-    const sal=calcSalary(d);
+    const sal=calcSalary({...d,trainerId});
     $('#tab-content').innerHTML=`<div class="tab-pad">
       <div class="section-header">
         <div><h3>${fio}</h3><p class="hint">${fmtMY(year,month)}</p></div>
@@ -2412,7 +2429,7 @@ async function adminDetail(trainerId,fioEnc,year,month) {
         <div class="summary-card"><div class="s-val">${sal.cat[1]}</div><div class="s-lbl">Кат.1</div></div>
         <div class="summary-card"><div class="s-val">${sal.cat[2]}</div><div class="s-lbl">Кат.2</div></div>
         <div class="summary-card"><div class="s-val">${sal.cat[3]}</div><div class="s-lbl">Кат.3</div></div>
-        <div class="summary-card"><div class="s-val">${sal.cat.dropIn}</div><div class="s-lbl">Разовые</div></div>
+        <div class="summary-card"><div class="s-val">${(sal.cat.dropIn1||0)+(sal.cat.dropIn2||0)+(sal.cat.dropIn3||0)}</div><div class="s-lbl">Разовые</div></div>
         <div class="summary-card"><div class="s-val">${sal.hours.toFixed(1)}ч</div><div class="s-lbl">Деж.</div></div>
         <div class="summary-card accent" style="grid-column:span 2">
           <div class="s-val">${fmt(sal.total)}</div><div class="s-lbl">К выплате</div>
@@ -2581,9 +2598,39 @@ async function doAddGroupClient(groupId) {
     renderGroupDetail(groupId);
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
-async function toggleGroupPayment(groupId, clientId, paid, amount, month) {
+function toggleGroupPayment(groupId, clientId, paid, amount, month) {
+  const isPaid = paid==='true'||paid===true;
+  if (!isPaid) {
+    // Открываем модал для ввода суммы и дат абонемента
+    const m=el('div','modal-overlay');
+    m.innerHTML=`<div class="modal">
+      <div class="modal-header"><h3>Оплата абонемента</h3>
+        <button class="btn-close" onclick="this.closest('.modal-overlay').remove()">✕</button></div>
+      <div class="form-group"><label>Сумма (сум)</label>
+        <input id="gp-amount" type="number" value="${amount||0}"></div>
+      <div class="form-group"><label>Начало абонемента</label>
+        <input id="gp-sub-start" type="date" value="${month.slice(0,10)}"></div>
+      <div class="form-group"><label>Конец абонемента</label>
+        <input id="gp-sub-end" type="date"></div>
+      <button class="btn btn-primary btn-full"
+        onclick="doSetGroupPayment('${groupId}','${clientId}','${month}',true)">✓ Оплачен</button>
+    </div>`;
+    document.body.appendChild(m);
+  } else {
+    // Снять оплату — без модала
+    DB.setGroupPayment(groupId, clientId, month, amount, false)
+      .then(()=>renderGroupDetail(groupId))
+      .catch(()=>toast('Ошибка','error'));
+  }
+}
+async function doSetGroupPayment(groupId, clientId, month, paid) {
+  const amount   = parseInt(document.getElementById('gp-amount')?.value)||0;
+  const subStart = document.getElementById('gp-sub-start')?.value||null;
+  const subEnd   = document.getElementById('gp-sub-end')?.value||null;
+  document.querySelector('.modal-overlay')?.remove();
   try {
-    await DB.setGroupPayment(groupId, clientId, month, amount, paid==='true'||paid===true);
+    await DB.setGroupPayment(groupId, clientId, month, amount, paid, subStart, subEnd);
+    toast('Оплата отмечена ✅','success');
     renderGroupDetail(groupId);
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
@@ -2789,7 +2836,11 @@ async function doDeleteBranch(id,name) {
 async function renderAdminGroups() {
   $('#tab-content').innerHTML=`<div class="tab-pad">
     <div class="section-header"><h3>Группы</h3>
-      <button class="btn btn-sm" onclick="renderAddGroupTypeModal()">+ Тип</button></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="renderSubstitutionsApproval()">🔄 Замены</button>
+        <button class="btn btn-sm" onclick="renderAddGroupTypeModal()">+ Тип</button>
+      </div>
+    </div>
     <div id="groups-list"><div class="center-screen"><div class="spinner"></div></div></div>
     <h4 style="margin-top:20px">Назначить группу тренеру</h4>
     <div id="assign-form"></div>
@@ -2822,8 +2873,12 @@ async function loadGroupsList() {
         ${assigned.length?assigned.map(a=>`
           <div style="display:flex;justify-content:space-between;align-items:center;width:100%;padding:4px 0;border-top:1px solid var(--border)">
             <span style="font-size:13px">${a.profiles?.fio||'—'} · ${a.branch}${a.role?' · '+a.role:''}</span>
-            <button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444"
-              onclick="doUnassignGroup(${a.id})">Открепить</button>
+            <div style="display:flex;gap:4px">
+              ${gt.type==='children'?`<button class="btn btn-sm" style="background:var(--card);border:1px solid var(--border)"
+                onclick="renderGroupMonthReport('${a.id}','${new Date().toISOString().slice(0,7)+'-01'}')">📊</button>`:''}
+              <button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444"
+                onclick="doUnassignGroup(${a.id})">Открепить</button>
+            </div>
           </div>`).join(''):'<p class="hint" style="font-size:12px">Нет тренеров</p>'}
       </div>`;
     }).join('')||'<p class="hint">Нет типов</p>';
@@ -2964,6 +3019,257 @@ async function doUnassignGroup(id) {
     await loadGroupsList();
   } catch(e) { toast('Ошибка','error'); console.error(e); }
 }
+// ══════════════════════════════════════════════════════════════
+// ОТЧЁТ ПО ДЕТСКОЙ ГРУППЕ + УТВЕРЖДЕНИЕ ЗП + ЗАМЕНЫ
+// ══════════════════════════════════════════════════════════════
+
+async function renderGroupMonthReport(groupId, monthStr) {
+  // monthStr = 'YYYY-MM-01'
+  const isAdmin = ['admin','ceo'].includes(STATE.profile.role);
+  loading('Загрузка...');
+  try {
+    const report = await DB.getGroupMonthReport(groupId, monthStr);
+    const {clients, payments, notes, attendance, payouts, trainers} = report;
+
+    const payMap  = Object.fromEntries(payments.map(p=>[p.group_client_id, p]));
+    const noteMap = Object.fromEntries(notes.map(n=>[n.group_client_id, n]));
+
+    // Уникальные даты занятий в месяце
+    const sessionDates = [...new Set(attendance.map(a=>a.session_date))].sort();
+    const totalSessions = sessionDates.length;
+
+    // Посещаемость по ребёнку
+    const attByClient = {};
+    attendance.forEach(a=>{
+      if (!attByClient[a.group_client_id]) attByClient[a.group_client_id]=0;
+      if (a.attended) attByClient[a.group_client_id]++;
+    });
+
+    // Итого оплат
+    const totalPaid = payments.filter(p=>p.paid).reduce((s,p)=>s+Number(p.amount||0),0);
+
+    // Утверждённые payouts
+    const payoutMap = Object.fromEntries(payouts.map(p=>[`${p.group_id}_${p.trainer_id}`, p]));
+
+    const monthLabel = new Date(monthStr).toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
+    const backFn = isAdmin ? `renderAdminApp();adminTab('groups')` : `renderSeniorApp();seniorTab('groups')`;
+
+    setScreen(`<div class="app-header">
+      <button class="btn-icon" onclick="${backFn}">←</button>
+      <div class="app-title">Отчёт группы</div><div></div></div>
+    <div class="tab-content"><div class="tab-pad">
+      <div class="section-header">
+        <h3>${monthLabel}</h3>
+        <div class="month-nav">
+          <button onclick="renderGroupMonthReport('${groupId}','${prevMonthStr(monthStr)}')">‹</button>
+          <button onclick="renderGroupMonthReport('${groupId}','${nextMonthStr(monthStr)}')">›</button>
+        </div>
+      </div>
+
+      <!-- Сводка -->
+      <div class="summary-cards" style="margin-bottom:16px">
+        <div class="summary-card"><div class="s-val">${clients.filter(c=>c.is_active).length}</div><div class="s-lbl">Детей</div></div>
+        <div class="summary-card"><div class="s-val">${payments.filter(p=>p.paid).length}</div><div class="s-lbl">Оплатили</div></div>
+        <div class="summary-card"><div class="s-val">${totalSessions}</div><div class="s-lbl">Занятий</div></div>
+        <div class="summary-card accent"><div class="s-val">${fmt(totalPaid)}</div><div class="s-lbl">Сумма оплат</div></div>
+      </div>
+
+      <!-- Таблица детей -->
+      <h4 style="margin-bottom:8px">Посещаемость и оплаты</h4>
+      <div style="overflow-x:auto">
+        <table class="admin-table" style="font-size:12px;min-width:320px">
+          <thead><tr>
+            <th style="text-align:left">Ребёнок</th>
+            <th>Оплата</th>
+            <th>Абонемент</th>
+            <th>Явка</th>
+            <th>Заметка</th>
+          </tr></thead>
+          <tbody>
+            ${clients.filter(c=>c.is_active).map(c=>{
+              const pay = payMap[c.id];
+              const note = noteMap[c.id];
+              const att = attByClient[c.id]||0;
+              const paid = pay?.paid;
+              return `<tr>
+                <td style="font-weight:500">${c.name}${c.age?`, ${c.age}л`:''}</td>
+                <td style="color:${paid?'#10b981':'#ef4444'}">${paid?fmt(pay?.amount||0)+' ✓':'—'}</td>
+                <td style="font-size:11px;color:var(--hint)">${pay?.sub_start?fmtDate(pay.sub_start)+(pay.sub_end?' – '+fmtDate(pay.sub_end):''):'—'}</td>
+                <td>${att}/${totalSessions}</td>
+                <td style="font-size:11px;color:var(--hint);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${note?.note||'—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Утверждение ЗП тренерам -->
+      ${isAdmin||STATE.profile.role==='senior_trainer'?`
+      <h4 style="margin-top:20px;margin-bottom:8px">ЗП тренерам за месяц</h4>
+      ${trainers.map(t=>{
+        const key = `${t.id}_${t.trainer_id}`;
+        const existing = payoutMap[`${groupId}_${t.trainer_id}`];
+        return `<div class="staff-card" style="flex-direction:column;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div class="staff-fio">${t.profiles?.fio||'—'}</div>
+              <div class="staff-meta">${t.role||'основной'}</div>
+            </div>
+            ${existing?`<span style="font-size:12px;color:#10b981;font-weight:600">
+              ${existing.payout_type==='fixed'?fmt(existing.payout_value)+' сум':existing.payout_value+'%'}
+              ✓</span>`:'<span style="font-size:12px;color:var(--hint)">Не утверждено</span>'}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="payout-type-${t.trainer_id}" onchange="onPayoutTypeChange(${t.trainer_id})"
+              style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);font-size:13px">
+              <option value="fixed" ${existing?.payout_type==='fixed'?'selected':''}>Фикс. сумма</option>
+              <option value="percent" ${existing?.payout_type==='percent'?'selected':''}>Процент (%)</option>
+            </select>
+            <input id="payout-val-${t.trainer_id}" type="number"
+              value="${existing?.payout_value||''}"
+              placeholder="${existing?.payout_type==='percent'?'40':'500000'}"
+              style="width:120px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);font-size:13px">
+            <button class="btn btn-sm btn-primary"
+              onclick="doApproveGroupPayout('${groupId}','${t.trainer_id}','${monthStr}')">Утвердить</button>
+          </div>
+          ${existing?.payout_type==='percent'?`<div style="font-size:11px;color:var(--hint)">
+            ${existing.payout_value}% от ${fmt(totalPaid)} = ${fmt(Math.round(totalPaid*existing.payout_value/100))} сум</div>`:''}
+        </div>`;
+      }).join('')}
+      `:''}
+
+    </div></div>`);
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+}
+
+function prevMonthStr(monthStr) {
+  const d = new Date(monthStr); d.setMonth(d.getMonth()-1);
+  return d.toISOString().slice(0,7)+'-01';
+}
+function nextMonthStr(monthStr) {
+  const d = new Date(monthStr); d.setMonth(d.getMonth()+1);
+  return d.toISOString().slice(0,7)+'-01';
+}
+function onPayoutTypeChange(trainerId) {
+  const type = document.getElementById(`payout-type-${trainerId}`)?.value;
+  const inp  = document.getElementById(`payout-val-${trainerId}`);
+  if (inp) inp.placeholder = type==='percent' ? '40' : '500000';
+}
+async function doApproveGroupPayout(groupId, trainerId, monthStr) {
+  const type  = document.getElementById(`payout-type-${trainerId}`)?.value||'fixed';
+  const val   = parseFloat(document.getElementById(`payout-val-${trainerId}`)?.value||0);
+  if (!val) return toast('Введите сумму или %','error');
+  if (_pending.has(`payout_${groupId}_${trainerId}`)) return;
+  _pending.add(`payout_${groupId}_${trainerId}`);
+  try {
+    await DB.setGroupTrainerPayout(parseInt(groupId), parseInt(trainerId), monthStr, type, val, STATE.profile.id);
+    toast('ЗП утверждена ✅','success');
+    renderGroupMonthReport(groupId, monthStr);
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+  finally { _pending.delete(`payout_${groupId}_${trainerId}`); }
+}
+
+// ── УТВЕРЖДЕНИЕ ЗАМЕН ─────────────────────────────────────────
+async function renderSubstitutionsApproval() {
+  const isAdmin = ['admin','ceo'].includes(STATE.profile.role);
+  const branches = STATE.profile.branches||[];
+  const now = new Date();
+  let year = now.getFullYear(), month = now.getMonth()+1;
+
+  const render = async ()=>{
+    const monthStr = `${year}-${String(month).padStart(2,'0')}-01`;
+    const [groupSubs, ptSubs] = await Promise.all([
+      DB.getGroupSubstitutionsForMonth(branches[0]||'', year, month).catch(()=>[]),
+      DB.getPTSubstitutionsForMonth(branches[0]||'', year, month).catch(()=>[]),
+    ]);
+    document.getElementById('subs-body').innerHTML = `
+      <!-- Групповые замены -->
+      <h4 style="margin-bottom:8px">Групповые замены</h4>
+      ${!groupSubs.length?'<p class="hint">Нет замен за период</p>':
+        groupSubs.map(s=>`<div class="staff-card" style="flex-direction:column;gap:8px">
+          <div>
+            <div class="staff-fio">${s.substitute?.fio||'?'} <span class="hint" style="font-weight:400">вместо ${s.original?.fio||'?'}</span></div>
+            <div class="staff-meta">${s.trainer_groups?.group_types?.name||'Группа'} · ${fmtDate(s.session_date)}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="gsub-rate-${s.id}" type="number" value="${s.rate||''}" placeholder="Ставка (сум)"
+              style="width:140px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);font-size:13px">
+            <span style="font-size:12px;padding:3px 10px;border-radius:10px;
+              background:${s.status==='approved'?'rgba(16,185,129,.15)':'rgba(245,158,11,.15)'};
+              color:${s.status==='approved'?'#10b981':'#f59e0b'}">${s.status==='approved'?'✓ Утверждено':'Ожидает'}</span>
+            <button class="btn btn-sm btn-primary"
+              onclick="doApproveGroupSub('${s.id}')">Утвердить</button>
+          </div>
+        </div>`).join('')}
+
+      <!-- ПТ-замены -->
+      <h4 style="margin-top:20px;margin-bottom:8px">ПТ-замены</h4>
+      ${!ptSubs.length?'<p class="hint">Нет ПТ-замен за период</p>':
+        ptSubs.map(s=>`<div class="staff-card" style="flex-direction:column;gap:8px">
+          <div>
+            <div class="staff-fio">${s.profiles?.fio||'?'} <span class="hint" style="font-weight:400">вместо ${s.sub_profile?.fio||'?'}</span></div>
+            <div class="staff-meta">${s.clients?.fio||'?'} · ${fmtDT(s.workout_date)}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="ptsub-rate-${s.id}" type="number" value="${s.substitute_rate||''}" placeholder="Ставка (сум)"
+              style="width:140px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--text);font-size:13px">
+            <span style="font-size:12px;padding:3px 10px;border-radius:10px;
+              background:${s.substitute_rate?'rgba(16,185,129,.15)':'rgba(245,158,11,.15)'};
+              color:${s.substitute_rate?'#10b981':'#f59e0b'}">${s.substitute_rate?'✓ '+fmt(s.substitute_rate)+' сум':'Ожидает'}</span>
+            <button class="btn btn-sm btn-primary"
+              onclick="doApprovePTSub('${s.id}')">Утвердить</button>
+          </div>
+        </div>`).join('')}
+    `;
+  };
+
+  $('#tab-content').innerHTML=`<div class="tab-pad">
+    <div class="section-header">
+      <h3>Утверждение замен</h3>
+      <div class="month-nav">
+        <button id="sub-prev">‹</button>
+        <span id="sub-month">${fmtMY(year,month)}</span>
+        <button id="sub-next">›</button>
+      </div>
+    </div>
+    <div id="subs-body"><div class="center-screen"><div class="spinner"></div></div></div>
+  </div>`;
+  document.getElementById('sub-prev')?.addEventListener('click',()=>{
+    if(month===1){year--;month=12;}else month--;
+    document.getElementById('sub-month').textContent=fmtMY(year,month); render();
+  });
+  document.getElementById('sub-next')?.addEventListener('click',()=>{
+    if(month===12){year++;month=1;}else month++;
+    document.getElementById('sub-month').textContent=fmtMY(year,month); render();
+  });
+  await render();
+}
+async function doApproveGroupSub(subId) {
+  if (_pending.has('gsub_'+subId)) return;
+  _pending.add('gsub_'+subId);
+  const rate = parseFloat(document.getElementById(`gsub-rate-${subId}`)?.value||0);
+  if (!rate) { _pending.delete('gsub_'+subId); return toast('Введите ставку','error'); }
+  try {
+    await DB.approveSubstitution(subId, rate);
+    toast('Замена утверждена ✅','success');
+    document.getElementById(`gsub-rate-${subId}`)?.closest('.staff-card')
+      ?.querySelector('span[style*="f59e0b"]')
+      ?.setAttribute('style','font-size:12px;padding:3px 10px;border-radius:10px;background:rgba(16,185,129,.15);color:#10b981');
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+  finally { _pending.delete('gsub_'+subId); }
+}
+async function doApprovePTSub(workoutId) {
+  if (_pending.has('ptsub_'+workoutId)) return;
+  _pending.add('ptsub_'+workoutId);
+  const rate = parseFloat(document.getElementById(`ptsub-rate-${workoutId}`)?.value||0);
+  if (!rate) { _pending.delete('ptsub_'+workoutId); return toast('Введите ставку','error'); }
+  try {
+    await DB.setPTSubstituteRate(workoutId, rate);
+    toast('Ставка выставлена ✅','success');
+  } catch(e) { toast('Ошибка','error'); console.error(e); }
+  finally { _pending.delete('ptsub_'+workoutId); }
+}
+
 function onRateTypeChange(sel) {
   const label = document.getElementById('ag-rate-label');
   const input = document.getElementById('ag-rate-value');
